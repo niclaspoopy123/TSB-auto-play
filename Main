@@ -184,6 +184,9 @@ local function initializeCombatSystem(character)
       REPLAY_FREQUENCY = 5, -- Replay every N actions
       MIN_REPLAY_SIZE = 50, -- Minimum experiences before replay starts
       N_STEP_RETURN = 3, -- Look ahead 3 steps for better credit assignment
+      -- Scoring constants
+      UNTRIED_ACTION_SCORE = 100, -- Initial score for unexplored actions
+      REPLAY_LEARNING_RATE_MULTIPLIER = 0.5, -- Use half learning rate for replay
       -- Rewards tuning
       REWARD_DAMAGE_DEALT_MULTIPLIER = 2.5, -- Increased to encourage damage
       REWARD_PERFECT_DODGE = 30, -- Increased reward for perfect dodges
@@ -344,7 +347,7 @@ local function initializeCombatSystem(character)
               local stats = tacticStats[experience.action]
               local old_value = stats.value
               local td_error = experience.reward + CONST.DISCOUNT_FACTOR_GAMMA * nextMaxQ - old_value
-              stats.value = old_value + CONST.LEARNING_RATE_ALPHA * 0.5 * td_error -- Use half learning rate for replay
+              stats.value = old_value + CONST.LEARNING_RATE_ALPHA * CONST.REPLAY_LEARNING_RATE_MULTIPLIER * td_error
           end
       end
   end
@@ -491,7 +494,7 @@ local function initializeCombatSystem(character)
               local score
               
               if stats.count == 0 then
-                  score = 100 -- High value for untried actions
+                  score = CONST.UNTRIED_ACTION_SCORE
               else
                   -- Combine Q-value with feature score
                   local qValue = stats.value / stats.count
@@ -559,9 +562,9 @@ local function initializeCombatSystem(character)
           local targetVelocity = AI.State.targetTorso.AssemblyLinearVelocity
           local perpendicular = rootPart.CFrame.RightVector * (math.random() > 0.5 and 1 or -1)
           if targetVelocity.Magnitude > 10 then
-              -- Dodge perpendicular to target's movement
+              -- Dodge perpendicular to target's movement (90 degree rotation in horizontal plane)
               local targetDir = targetVelocity.Unit
-              perpendicular = Vector3.new(-targetDir.Z, 0, targetDir.X) -- 90 degree rotation
+              perpendicular = Vector3.new(targetDir.Z, 0, -targetDir.X)
           end
           communicateEvent:FireServer({["Dash"]=perpendicular.Unit, ["Key"]="Q", ["Goal"]="KeyPress"})
           AI.State.lastActionTimes.EVADE = now
@@ -668,6 +671,10 @@ local function initializeCombatSystem(character)
       end
   end
 
+  local function isNaN(value)
+      return value ~= value
+  end
+
   local function RunGlitchScanner()
       local now = os.clock()
       
@@ -710,7 +717,7 @@ local function initializeCombatSystem(character)
 
       -- 3. NaN position check (fast)
       local pos = rootPart.Position
-      if pos.X ~= pos.X or pos.Y ~= pos.Y or pos.Z ~= pos.Z then
+      if isNaN(pos.X) or isNaN(pos.Y) or isNaN(pos.Z) then
           triggerGlitch("NaN Position")
       end
   end
