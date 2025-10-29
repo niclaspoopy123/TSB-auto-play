@@ -562,9 +562,9 @@ local function initializeCombatSystem(character)
           local targetVelocity = AI.State.targetTorso.AssemblyLinearVelocity
           local perpendicular = rootPart.CFrame.RightVector * (math.random() > 0.5 and 1 or -1)
           if targetVelocity.Magnitude > 10 then
-              -- Dodge perpendicular to target's movement (90 degree rotation in horizontal plane)
+              -- Dodge perpendicular to target's movement (+90 degree rotation in horizontal plane)
               local targetDir = targetVelocity.Unit
-              perpendicular = Vector3.new(targetDir.Z, 0, -targetDir.X)
+              perpendicular = Vector3.new(-targetDir.Z, 0, targetDir.X)
           end
           communicateEvent:FireServer({["Dash"]=perpendicular.Unit, ["Key"]="Q", ["Goal"]="KeyPress"})
           AI.State.lastActionTimes.EVADE = now
@@ -671,6 +671,7 @@ local function initializeCombatSystem(character)
       end
   end
 
+  -- Helper function to detect NaN values (IEEE 754: NaN is the only value that doesn't equal itself)
   local function isNaN(value)
       return value ~= value
   end
