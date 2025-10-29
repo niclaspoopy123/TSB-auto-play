@@ -392,12 +392,11 @@ local function initializeCombatSystem(character)
       -- Randomly choose which Q-network to update (Double Q-Learning)
       local updateA = math.random() < 0.5
       local statsToUpdate = updateA and tacticStatsA[action] or tacticStatsB[action]
-      local statsForNextQ = updateA and tacticStatsB or tacticStatsA
       
       local actionCost = CONST.COSTS[action] or 0
       local netReward = rawReward - (actionCost * CONST.COST_PENALTY_FACTOR)
 
-      -- Calculate TD error using the other network's Q-value (Double Q-Learning)
+      -- Calculate TD error (nextMaxQValue already uses both networks via GetBestNextQValue)
       local old_value = statsToUpdate.value
       local td_error = netReward + CONST.DISCOUNT_FACTOR_GAMMA * nextMaxQValue - old_value
       
@@ -542,8 +541,10 @@ local function initializeCombatSystem(character)
           score += value
       end
       
-      -- Normalize score
-      score = score / 8
+      -- Normalize score dynamically based on number of features
+      local featureCount = 0
+      for _ in pairs(features) do featureCount += 1 end
+      score = featureCount > 0 and (score / featureCount) or 0
       
       return features, score
   end
@@ -577,10 +578,29 @@ local function initializeCombatSystem(character)
               AI.OpponentModel.aggressionScore = aggressiveActions / #AI.OpponentModel.lastActions
           end
           
-          -- Predict next action based on pattern (simple Markov chain)
+          -- Predict next action based on pattern (improved sequence analysis)
           if #AI.OpponentModel.lastActions >= 3 then
-              local recent = AI.OpponentModel.lastActions[#AI.OpponentModel.lastActions]
-              AI.OpponentModel.predictedNextAction = recent -- Simple prediction
+              -- Look for action patterns in recent history
+              local last1 = AI.OpponentModel.lastActions[#AI.OpponentModel.lastActions]
+              local last2 = AI.OpponentModel.lastActions[#AI.OpponentModel.lastActions - 1]
+              
+              -- Simple pattern matching: if last 2 actions were aggressive, predict aggression continues
+              if (last1 == "ATTACK" or last1 == "SPECIAL") and (last2 == "ATTACK" or last2 == "SPECIAL") then
+                  AI.OpponentModel.predictedNextAction = "ATTACK"
+              elseif (last1 == "EVADE" or last1 == "FEINT") and (last2 == "EVADE" or last2 == "FEINT") then
+                  AI.OpponentModel.predictedNextAction = "EVADE"
+              else
+                  -- Default to most frequent action
+                  local maxFreq = 0
+                  local mostFrequent = "ATTACK"
+                  for action, freq in pairs(AI.OpponentModel.actionFrequency) do
+                      if freq > maxFreq then
+                          maxFreq = freq
+                          mostFrequent = action
+                      end
+                  end
+                  AI.OpponentModel.predictedNextAction = mostFrequent
+              end
           end
       end
   end
@@ -772,9 +792,12 @@ local function initializeCombatSystem(character)
               if statsA.count == 0 then
                   score = CONST.UNTRIED_ACTION_SCORE
               else
-                  -- Double Q-Learning: Average both networks
+                  -- Double Q-Learning: Average both networks with safety checks
                   local qValueA = statsA.value / statsA.count
-                  local qValueB = (statsB and statsB.count > 0) and (statsB.value / statsB.count) or qValueA
+                  local qValueB = qValueA -- Default to A if B not available
+                  if statsB and statsB.count and statsB.value and statsB.count > 0 then
+                      qValueB = statsB.value / statsB.count
+                  end
                   local qValue = (qValueA + qValueB) / 2
                   
                   -- Hybrid learning: Combine model-free and model-based
