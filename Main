@@ -749,17 +749,36 @@ local function initializeCombatSystem(character)
           table.remove(AI.MetaLearning.recentRewards, 1)
       end
       
-      -- Calculate performance trend for adaptive learning rate
+      -- Calculate performance trend for adaptive learning rate (enhanced with variance analysis)
       if #AI.MetaLearning.recentRewards >= 10 then
           local recentSum = 0
+          local recentVar = 0
           for i = #AI.MetaLearning.recentRewards - 9, #AI.MetaLearning.recentRewards do
               recentSum += AI.MetaLearning.recentRewards[i]
           end
+          local recentMean = recentSum / 10
+          
+          -- Calculate variance for stability analysis
+          for i = #AI.MetaLearning.recentRewards - 9, #AI.MetaLearning.recentRewards do
+              local diff = AI.MetaLearning.recentRewards[i] - recentMean
+              recentVar += diff * diff
+          end
+          recentVar = recentVar / 10
+          
           local oldSum = 0
           for i = 1, math.min(10, #AI.MetaLearning.recentRewards - 10) do
               oldSum += AI.MetaLearning.recentRewards[i]
           end
           AI.MetaLearning.performanceTrend = recentSum - oldSum
+          
+          -- Adjust learning rate based on variance (lower variance = more stable, increase LR)
+          if recentVar < 5 and recentMean > 0 then
+              -- Stable positive performance: can increase learning rate slightly
+              AI.DeepNetwork.learningRateDNN = math.min(0.002, AI.DeepNetwork.learningRateDNN * 1.02)
+          elseif recentVar > 20 then
+              -- High variance: decrease learning rate for stability
+              AI.DeepNetwork.learningRateDNN = math.max(0.0005, AI.DeepNetwork.learningRateDNN * 0.95)
+          end
       end
       
       -- Adaptive learning rate based on performance
@@ -1035,7 +1054,7 @@ local function initializeCombatSystem(character)
               end
           end
           
-          -- Learn action sequences (n-gram patterns)
+          -- Learn action sequences (n-gram patterns with context)
           if #AI.OpponentModel.lastActions >= 3 then
               local pattern = table.concat(AI.OpponentModel.lastActions, ",", #AI.OpponentModel.lastActions - 2, #AI.OpponentModel.lastActions)
               if not AI.LSTMOpponentModel.patterns[pattern] then
@@ -1045,6 +1064,30 @@ local function initializeCombatSystem(character)
               -- Store what action followed this pattern
               table.insert(AI.LSTMOpponentModel.patterns[pattern], observedAction)
               AI.LSTMOpponentModel.patternConfidence[pattern] += 1
+              
+              -- Enhanced prediction using learned patterns
+              if AI.LSTMOpponentModel.patternConfidence[pattern] >= 3 then
+                  -- Find most common action following this pattern
+                  local actionCounts = {}
+                  for _, act in ipairs(AI.LSTMOpponentModel.patterns[pattern]) do
+                      actionCounts[act] = (actionCounts[act] or 0) + 1
+                  end
+                  
+                  local maxCount = 0
+                  local mostLikely = nil
+                  for act, count in pairs(actionCounts) do
+                      if count > maxCount then
+                          maxCount = count
+                          mostLikely = act
+                      end
+                  end
+                  
+                  if mostLikely and maxCount / AI.LSTMOpponentModel.patternConfidence[pattern] > 0.5 then
+                      -- High confidence prediction based on pattern
+                      AI.OpponentModel.predictedNextAction = mostLikely
+                      print(`Pattern-based prediction: {mostLikely} (confidence: {maxCount}/{AI.LSTMOpponentModel.patternConfidence[pattern]})`)
+                  end
+              end
           end
       end
   end
@@ -1222,14 +1265,21 @@ local function initializeCombatSystem(character)
       local ensembleQValues = AI.DeepLearning.EnsemblePredict(stateEncoded)
       local policyProbs = AI.DeepLearning.PredictPolicy(stateEncoded)
       
-      -- Choose exploration strategy based on learning progress
+      -- Choose exploration strategy based on learning progress and opponent patterns
       local explorationMode = AI.State.explorationStrategy
       if AI.ActionStats.totalTrials < 100 then
           explorationMode = "epsilon-greedy" -- Early exploration
       elseif AI.ActionStats.totalTrials < 500 then
           explorationMode = "policy-gradient" -- Use policy network
       else
-          explorationMode = "ensemble" -- Late-game refinement with ensemble
+          -- Adaptive strategy selection based on opponent behavior
+          if AI.OpponentModel.aggressionScore > 0.7 then
+              explorationMode = "defensive-ensemble" -- Conservative ensemble for aggressive opponents
+          elseif AI.OpponentModel.aggressionScore < 0.3 then
+              explorationMode = "aggressive-policy" -- Aggressive policy for defensive opponents
+          else
+              explorationMode = "ensemble" -- Balanced ensemble for mixed opponents
+          end
       end
 
       -- Build action scores with deep learning integration
@@ -1273,11 +1323,18 @@ local function initializeCombatSystem(character)
               -- Apply situational modifiers for tactical awareness
               local modifier = 1.0
               
-              -- React to predicted opponent action
+              -- React to predicted opponent action (enhanced with LSTM confidence)
               if AI.OpponentModel.predictedNextAction == "ATTACK" and action == "EVADE" then
-                  modifier *= 1.5
+                  local confidence = AI.LSTMOpponentModel.sequenceLength >= 10 and 2.0 or 1.5
+                  modifier *= confidence
               end
               
+              -- Counter-prediction: If opponent is likely to evade, use reposition or feint
+              if AI.OpponentModel.predictedNextAction == "EVADE" and (action == "FEINT" or action == "REPOSITION") then
+                  modifier *= 1.4
+              end
+              
+              -- Adaptive threat response
               if action == "EVADE" and state.isTargetAttacking then 
                   modifier = 2.2 -- Stronger preference for evasion when under attack
               end
@@ -1289,6 +1346,19 @@ local function initializeCombatSystem(character)
               end
               if action == "SPECIAL" and now < AI.State.punishWindowEndTime then
                   modifier *= 1.6 -- Capitalize on punish windows
+              end
+              
+              -- Health-based adaptivity
+              if state.myHealthPercent < 0.3 and action == "EVADE" then
+                  modifier *= 1.3 -- More defensive when low health
+              end
+              if state.targetHealthPercent < 0.2 and (action == "ATTACK" or action == "SPECIAL") then
+                  modifier *= 1.4 -- Go aggressive for the kill
+              end
+              
+              -- Energy management
+              if state.energy < CONST.MAX_ENERGY * 0.2 and action ~= "ATTACK" and action ~= "REPOSITION" then
+                  modifier *= 0.7 -- Conserve energy when low
               end
 
               table.insert(actionScores, { 
@@ -1306,7 +1376,7 @@ local function initializeCombatSystem(character)
       if explorationMode == "epsilon-greedy" and math.random() < AI.State.epsilon then
           -- Epsilon-greedy: Random action
           return actionScores[math.random(#actionScores)].action
-      elseif explorationMode == "policy-gradient" then
+      elseif explorationMode == "policy-gradient" or explorationMode == "aggressive-policy" then
           -- Policy gradient: Sample from policy network distribution
           local rand = math.random()
           local cumProb = 0
@@ -1317,7 +1387,7 @@ local function initializeCombatSystem(character)
                   return actionData.action
               end
           end
-      elseif explorationMode == "ensemble" then
+      elseif explorationMode == "ensemble" or explorationMode == "defensive-ensemble" then
           -- Ensemble voting: Use ensemble consensus with confidence weighting
           for _, actionData in ipairs(actionScores) do
               local actionIdx = actionMap[actionData.action]
@@ -1325,6 +1395,11 @@ local function initializeCombatSystem(character)
               local variance = math.abs(dnnQValues[actionIdx] - ensembleQValues[actionIdx])
               local confidenceBonus = math.max(0, 5 - variance)
               actionData.score += confidenceBonus
+              
+              -- Defensive bonus for defensive-ensemble mode
+              if explorationMode == "defensive-ensemble" and (actionData.action == "EVADE" or actionData.action == "FEINT") then
+                  actionData.score *= 1.2
+              end
           end
       elseif explorationMode == "ucb" then
           -- Upper Confidence Bound: Balance exploration and exploitation
@@ -1650,13 +1725,28 @@ local function initializeCombatSystem(character)
               reward = CONST.REWARD_ANOMALOUS_DAMAGE
           else
               reward = damageDealt * CONST.REWARD_DAMAGE_DEALT_MULTIPLIER
-              -- Bonus for combo damage
+              -- Bonus for combo damage (progressive scaling)
               if now < AI.State.comboStateEndTime then
                   reward *= 1.35
               end
               -- Bonus for exploiting opportunity windows
               if now < AI.State.punishWindowEndTime then
                   reward *= 1.25
+              end
+              -- Bonus for efficient damage (high damage with low energy cost)
+              local efficiency = damageDealt / (1 + (CONST.COSTS[action] or 0))
+              if efficiency > 10 then
+                  reward *= 1.15 -- Reward efficient actions
+              end
+              -- Bonus for momentum (consecutive successful hits)
+              local recentSuccesses = 0
+              for i = math.max(1, #AI.State.stateHistory - 3), #AI.State.stateHistory do
+                  if AI.State.stateHistory[i] and AI.State.stateHistory[i].reward > 0 then
+                      recentSuccesses += 1
+                  end
+              end
+              if recentSuccesses >= 2 then
+                  reward *= (1 + recentSuccesses * 0.1) -- Momentum bonus
               end
           end
 
