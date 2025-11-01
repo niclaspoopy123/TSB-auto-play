@@ -572,13 +572,14 @@ local function initializeCombatSystem(character)
           local advHidden2 = ForwardLayer(network.advantageNet.layer2, advHidden1, LeakyReLU)
           local advantages = ForwardLayer(network.advantageNet.layer3, advHidden2, function(x) return x end)
           
-          -- Combine
+          -- Combine (optimized calculation)
           local meanAdv = 0
           for _, adv in ipairs(advantages) do meanAdv += adv end
           meanAdv /= #advantages
+          local adjustedStateValue = stateValue - meanAdv
           
           for j, adv in ipairs(advantages) do
-              ensembleQValues[j] = (ensembleQValues[j] or 0) + stateValue + (adv - meanAdv)
+              ensembleQValues[j] = (ensembleQValues[j] or 0) + adjustedStateValue + adv
           end
       end
       
@@ -1500,8 +1501,8 @@ local function initializeCombatSystem(character)
           AI.Learning.Reinforce(AI.State.currentTactic, "REPOSITION", reward, state)
       end
       
-      -- Store current state in history for n-step returns
-      table.insert(AI.State.stateHistory, {state = state, action = action, reward = 0, tactic = AI.State.currentTactic})
+      -- Store current state in history for n-step returns (reward will be updated later)
+      table.insert(AI.State.stateHistory, {state = state, action = action, reward = nil, tactic = AI.State.currentTactic, timestamp = os.clock()})
       if #AI.State.stateHistory > CONST.N_STEP_RETURN + 2 then
           table.remove(AI.State.stateHistory, 1)
       end
@@ -1740,13 +1741,23 @@ local function initializeCombatSystem(character)
               end
               -- Bonus for momentum (consecutive successful hits)
               local recentSuccesses = 0
+              local now = os.clock()
               for i = math.max(1, #AI.State.stateHistory - 3), #AI.State.stateHistory do
-                  if AI.State.stateHistory[i] and AI.State.stateHistory[i].reward > 0 then
-                      recentSuccesses += 1
+                  local entry = AI.State.stateHistory[i]
+                  -- Check if this was a recent damaging action (within last 2 seconds)
+                  if entry and entry.timestamp and (now - entry.timestamp) < 2.0 then
+                      if entry.action == "ATTACK" or entry.action == "SPECIAL" then
+                          recentSuccesses += 1
+                      end
                   end
               end
               if recentSuccesses >= 2 then
                   reward *= (1 + recentSuccesses * 0.1) -- Momentum bonus
+              end
+              
+              -- Update current state history entry with actual reward
+              if #AI.State.stateHistory > 0 then
+                  AI.State.stateHistory[#AI.State.stateHistory].reward = reward
               end
           end
 
