@@ -572,14 +572,13 @@ local function initializeCombatSystem(character)
           local advHidden2 = ForwardLayer(network.advantageNet.layer2, advHidden1, LeakyReLU)
           local advantages = ForwardLayer(network.advantageNet.layer3, advHidden2, function(x) return x end)
           
-          -- Combine (optimized calculation)
+          -- Combine (Dueling DQN: Q(s,a) = V(s) + A(s,a) - mean(A(s,a)))
           local meanAdv = 0
           for _, adv in ipairs(advantages) do meanAdv += adv end
           meanAdv /= #advantages
-          local adjustedStateValue = stateValue - meanAdv
           
           for j, adv in ipairs(advantages) do
-              ensembleQValues[j] = (ensembleQValues[j] or 0) + adjustedStateValue + adv
+              ensembleQValues[j] = (ensembleQValues[j] or 0) + stateValue + (adv - meanAdv)
           end
       end
       
@@ -1301,8 +1300,10 @@ local function initializeCombatSystem(character)
                   local qValueB = (statsB and statsB.count > 0) and (statsB.value / statsB.count) or qValueA
                   local tabularQ = (qValueA + qValueB) / 2
                   
-                  -- Deep network Q-value (ensemble average)
-                  local deepQ = (dnnQValues[actionIdx] + ensembleQValues[actionIdx]) / 2
+                  -- Deep network Q-value (ensemble average with nil checks)
+                  local dnnQ = dnnQValues[actionIdx] or 0
+                  local ensembleQ = ensembleQValues[actionIdx] or 0
+                  local deepQ = (dnnQ + ensembleQ) / 2
                   
                   -- Adaptive weighting: More weight on deep network as it learns
                   local deepWeight = math.min(0.7, AI.ActionStats.totalTrials / 1000)
@@ -1392,8 +1393,10 @@ local function initializeCombatSystem(character)
           -- Ensemble voting: Use ensemble consensus with confidence weighting
           for _, actionData in ipairs(actionScores) do
               local actionIdx = actionMap[actionData.action]
-              -- Weight by ensemble agreement (lower variance = higher confidence)
-              local variance = math.abs(dnnQValues[actionIdx] - ensembleQValues[actionIdx])
+              -- Weight by ensemble agreement (lower variance = higher confidence) with nil checks
+              local dnnQ = dnnQValues[actionIdx] or 0
+              local ensembleQ = ensembleQValues[actionIdx] or 0
+              local variance = math.abs(dnnQ - ensembleQ)
               local confidenceBonus = math.max(0, 5 - variance)
               actionData.score += confidenceBonus
               
