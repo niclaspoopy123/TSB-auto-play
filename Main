@@ -745,27 +745,27 @@ local function initializeCombatSystem(character)
       TARGET_SCAN_INTERVAL = 0.3, -- Reduced from 0.5 for faster target acquisition
       MAX_ENERGY = 500, ENERGY_REGEN_RATE = 100,
       COSTS = { SPECIAL = 10, DASH = 2, FEINT = 1, ATTACK = 0, REPOSITION = 0 },
-      ATTACK_COOLDOWN = 0.02, SPECIAL_MOVE_COOLDOWN = 0.35, DASH_COOLDOWN = 0.06, FEINT_COOLDOWN = 0.85, -- Ultra-fast reactions
+      ATTACK_COOLDOWN = 0.015, SPECIAL_MOVE_COOLDOWN = 0.3, DASH_COOLDOWN = 0.05, FEINT_COOLDOWN = 0.75, -- Ultra-fast reactions
       FEINT_DURATION = 0.18, FEINT_SUCCESS_DISTANCE = 5,
-      PERFECT_DODGE_WINDOW = 0.5, PUNISH_WINDOW_DURATION = 2.0, COMBO_WINDOW_DURATION = 2.0,
-      BASE_PREDICTION_TIME = 0.02, -- Optimized for ultra-fast prediction
+      PERFECT_DODGE_WINDOW = 0.6, PUNISH_WINDOW_DURATION = 2.5, COMBO_WINDOW_DURATION = 2.5,
+      BASE_PREDICTION_TIME = 0.015, -- Optimized for ultra-fast prediction
       -- Enhanced Double Q-Learning parameters
-      LEARNING_RATE_ALPHA = 0.45, -- Adaptive base rate
-      MIN_LEARNING_RATE = 0.1, -- Minimum learning rate for stability
-      MAX_LEARNING_RATE = 0.7, -- Maximum learning rate for fast adaptation
-      DISCOUNT_FACTOR_GAMMA = 0.96, -- Improved for better long-term planning
-      ELIGIBILITY_LAMBDA = 0.85, -- Enhanced eligibility trace decay
-      COST_PENALTY_FACTOR = 0.08,
+      LEARNING_RATE_ALPHA = 0.5, -- Adaptive base rate - increased for faster learning
+      MIN_LEARNING_RATE = 0.15, -- Minimum learning rate for stability
+      MAX_LEARNING_RATE = 0.8, -- Maximum learning rate for fast adaptation
+      DISCOUNT_FACTOR_GAMMA = 0.97, -- Improved for better long-term planning
+      ELIGIBILITY_LAMBDA = 0.9, -- Enhanced eligibility trace decay - better credit assignment
+      COST_PENALTY_FACTOR = 0.06,
       -- Hybrid learning parameters
       MODEL_LEARNING_RATE = 0.3, -- For model-based learning
       MODEL_UPDATE_THRESHOLD = 10, -- Update model every N experiences
       -- Meta-learning parameters
-      META_ADAPTATION_RATE = 0.05, -- How fast to adjust learning rate
-      PERFORMANCE_WINDOW = 20, -- Number of actions to evaluate performance
+      META_ADAPTATION_RATE = 0.08, -- How fast to adjust learning rate - increased for better adaptation
+      PERFORMANCE_WINDOW = 15, -- Number of actions to evaluate performance - reduced for faster response
       -- Advanced exploration strategies
-      INITIAL_EPSILON = 0.25, -- Start with 25% exploration
-      MIN_EPSILON = 0.03, -- Minimum 3% exploration
-      EPSILON_DECAY = 0.9997, -- Slower decay for better exploration
+      INITIAL_EPSILON = 0.3, -- Start with 30% exploration - increased for better initial learning
+      MIN_EPSILON = 0.05, -- Minimum 5% exploration - increased to maintain discovery
+      EPSILON_DECAY = 0.9995, -- Slower decay for better exploration
       UCB_EXPLORATION_CONSTANT = 2.0, -- Upper Confidence Bound parameter
       BOLTZMANN_TEMPERATURE = 1.5, -- Temperature for Boltzmann exploration
       TEMPERATURE_DECAY = 0.998, -- Cool down over time
@@ -778,11 +778,12 @@ local function initializeCombatSystem(character)
       UNTRIED_ACTION_SCORE = 100, -- Initial score for unexplored actions
       REPLAY_LEARNING_RATE_MULTIPLIER = 0.5, -- Use half learning rate for replay
       -- Rewards tuning
-      REWARD_DAMAGE_DEALT_MULTIPLIER = 2.5, -- Increased to encourage damage
-      REWARD_PERFECT_DODGE = 30, -- Increased reward for perfect dodges
-      REWARD_FEINT_SUCCESS = 12,
-      PENALTY_DAMAGE_TAKEN_MULTIPLIER = -3.0, -- Stronger penalty for taking damage
-      PENALTY_FAILED_ACTION = -3,
+      REWARD_DAMAGE_DEALT_MULTIPLIER = 3.0, -- Increased to encourage damage
+      REWARD_PERFECT_DODGE = 35, -- Increased reward for perfect dodges
+      REWARD_FEINT_SUCCESS = 15,
+      REWARD_COMBO_MULTIPLIER = 1.5, -- Bonus multiplier for combo damage
+      PENALTY_DAMAGE_TAKEN_MULTIPLIER = -3.5, -- Stronger penalty for taking damage
+      PENALTY_FAILED_ACTION = -4,
       TACTIC_CONFIDENCE_THRESHOLD = 50, TACTIC_CHANGE_COOLDOWN = 1.5, -- Reduced for faster adaptation
       EXPLOIT_SEEKER_CONFIDENCE_THRESHOLD = 20,
       EXPLOIT_SEEKER_COOLDOWN = 12.0, -- Reduced cooldown
@@ -823,6 +824,13 @@ local function initializeCombatSystem(character)
           -- Opponent tracking
           lastOpponentAction = "UNKNOWN",
           opponentActionTime = 0,
+          -- Combo tracking for better reward shaping
+          comboCount = 0,
+          lastComboTime = 0,
+          consecutiveHits = 0,
+          -- Adaptive learning rate
+          currentLearningRate = CONST.LEARNING_RATE_ALPHA,
+          recentPerformance = {},
       }
       print("AI State reset. Learned statistics and score have been preserved.")
   end
@@ -1388,15 +1396,38 @@ local function initializeCombatSystem(character)
           end
       end
       
-      -- Adaptive learning rate based on performance
-      local learningRate = AI.MetaLearning.adaptiveLearningRate
-      if AI.MetaLearning.performanceTrend > 0 then
-          -- Performance improving: slightly increase learning rate
-          learningRate = math.min(CONST.MAX_LEARNING_RATE, learningRate * (1 + CONST.META_ADAPTATION_RATE))
-      elseif AI.MetaLearning.performanceTrend < -5 then
-          -- Performance declining: decrease learning rate for stability
-          learningRate = math.max(CONST.MIN_LEARNING_RATE, learningRate * (1 - CONST.META_ADAPTATION_RATE))
+      -- Adaptive learning rate based on recent performance
+      local learningRate = AI.State.currentLearningRate
+      
+      -- Calculate performance metrics from recent rewards
+      if #AI.State.recentPerformance >= 5 then
+          local perfSum = 0
+          local perfVar = 0
+          for _, perf in ipairs(AI.State.recentPerformance) do
+              perfSum += perf
+          end
+          local perfMean = perfSum / #AI.State.recentPerformance
+          
+          -- Calculate variance
+          for _, perf in ipairs(AI.State.recentPerformance) do
+              local diff = perf - perfMean
+              perfVar += diff * diff
+          end
+          perfVar = perfVar / #AI.State.recentPerformance
+          
+          -- Adapt learning rate based on performance stability and trend
+          if perfMean > 5 and perfVar < 10 then
+              -- Good stable performance: increase learning rate
+              learningRate = math.min(CONST.MAX_LEARNING_RATE, learningRate * 1.05)
+          elseif perfMean < 0 or perfVar > 30 then
+              -- Poor or unstable performance: decrease learning rate
+              learningRate = math.max(CONST.MIN_LEARNING_RATE, learningRate * 0.95)
+          end
+          
+          AI.State.currentLearningRate = learningRate
       end
+      
+      -- Use adaptive learning rate for meta-learning as well
       AI.MetaLearning.adaptiveLearningRate = learningRate
 
       -- Deep Q-Learning: Use neural network predictions with distributional RL
@@ -2007,31 +2038,58 @@ local function initializeCombatSystem(character)
                   modifier *= 1.4
               end
               
-              -- Adaptive threat response
+              -- Adaptive threat response (improved)
               if action == "EVADE" and state.isTargetAttacking then 
-                  modifier = 2.2 -- Stronger preference for evasion when under attack
+                  modifier = 2.5 -- Stronger preference for evasion when under attack
               end
               if (tactic == "BaitAndPunish" or tactic == "Defensive") and action == "EVADE" then 
-                  modifier *= 1.4
+                  modifier *= 1.5
               end
               if action == "ATTACK" and inCombo then
-                  modifier *= 1.5 -- Stronger combo encouragement
+                  -- Much stronger combo encouragement with scaling bonus
+                  local comboBonus = 1.6 + (AI.State.comboCount * 0.15)
+                  modifier *= math.min(comboBonus, 2.5)
+              end
+              if action == "SPECIAL" and inCombo and AI.State.comboCount >= 2 then
+                  -- Use special moves in combos for maximum damage
+                  modifier *= 1.8
               end
               if action == "SPECIAL" and now < AI.State.punishWindowEndTime then
-                  modifier *= 1.6 -- Capitalize on punish windows
+                  modifier *= 1.8 -- Increased from 1.6 - Capitalize on punish windows
               end
               
-              -- Health-based adaptivity
+              -- Health-based adaptivity (improved)
               if state.myHealthPercent < 0.3 and action == "EVADE" then
-                  modifier *= 1.3 -- More defensive when low health
+                  modifier *= 1.5 -- More defensive when low health
               end
-              if state.targetHealthPercent < 0.2 and (action == "ATTACK" or action == "SPECIAL") then
-                  modifier *= 1.4 -- Go aggressive for the kill
+              if state.myHealthPercent < 0.15 and action == "REPOSITION" then
+                  modifier *= 1.3 -- Prioritize repositioning when critically low
+              end
+              if state.targetHealthPercent < 0.25 and (action == "ATTACK" or action == "SPECIAL") then
+                  modifier *= 1.6 -- Go aggressive for the kill - increased from 1.4
+              end
+              if state.targetHealthPercent < 0.1 and action == "SPECIAL" then
+                  modifier *= 1.4 -- Extra bonus for special finishers
               end
               
-              -- Energy management
-              if state.energy < CONST.MAX_ENERGY * 0.2 and action ~= "ATTACK" and action ~= "REPOSITION" then
-                  modifier *= 0.7 -- Conserve energy when low
+              -- Improved energy management
+              if state.energy < CONST.MAX_ENERGY * 0.15 then
+                  -- Critical energy: strongly prefer free actions
+                  if action == "ATTACK" or action == "REPOSITION" then
+                      modifier *= 1.2
+                  elseif action ~= "EVADE" then -- Still allow evade if necessary
+                      modifier *= 0.5
+                  end
+              elseif state.energy < CONST.MAX_ENERGY * 0.3 then
+                  -- Low energy: moderately conserve
+                  if action ~= "ATTACK" and action ~= "REPOSITION" and action ~= "EVADE" then
+                      modifier *= 0.7
+                  end
+              elseif state.energy > CONST.MAX_ENERGY * 0.7 then
+                  -- High energy: encourage special moves
+                  if action == "SPECIAL" then
+                      modifier *= 1.2
+                  end
               end
 
               table.insert(actionScores, { 
@@ -2400,38 +2458,49 @@ local function initializeCombatSystem(character)
               reward = CONST.REWARD_ANOMALOUS_DAMAGE
           else
               reward = damageDealt * CONST.REWARD_DAMAGE_DEALT_MULTIPLIER
-              -- Bonus for combo damage (progressive scaling)
-              if now < AI.State.comboStateEndTime then
-                  reward *= 1.35
+              
+              -- Enhanced combo tracking and rewards
+              local comboActive = now < AI.State.comboStateEndTime
+              if comboActive then
+                  AI.State.comboCount += 1
+                  AI.State.consecutiveHits += 1
+                  AI.State.lastComboTime = now
+                  -- Progressive combo multiplier (gets better with more hits)
+                  local comboMultiplier = 1.0 + (AI.State.comboCount * 0.15)
+                  reward *= math.min(comboMultiplier, 2.5) -- Cap at 2.5x
+                  print(`Combo x${AI.State.comboCount}! Reward multiplier: ${comboMultiplier}`)
+              else
+                  -- Reset combo count if combo window expired
+                  if AI.State.comboCount > 0 then
+                      print(`Combo ended at x${AI.State.comboCount}`)
+                  end
+                  AI.State.comboCount = 1
+                  AI.State.consecutiveHits = 1
               end
+              
               -- Bonus for exploiting opportunity windows
               if now < AI.State.punishWindowEndTime then
-                  reward *= 1.25
+                  reward *= 1.3 -- Increased from 1.25
               end
               -- Bonus for efficient damage (high damage with low energy cost)
               local efficiency = damageDealt / (1 + (CONST.COSTS[action] or 0))
               if efficiency > 10 then
-                  reward *= 1.15 -- Reward efficient actions
+                  reward *= 1.2 -- Increased from 1.15 - Reward efficient actions
               end
               -- Bonus for momentum (consecutive successful hits)
-              local recentSuccesses = 0
-              local now = os.clock()
-              for i = math.max(1, #AI.State.stateHistory - 3), #AI.State.stateHistory do
-                  local entry = AI.State.stateHistory[i]
-                  -- Check if this was a recent damaging action (within last 2 seconds)
-                  if entry and entry.timestamp and (now - entry.timestamp) < 2.0 then
-                      if entry.action == "ATTACK" or entry.action == "SPECIAL" then
-                          recentSuccesses += 1
-                      end
-                  end
-              end
-              if recentSuccesses >= 2 then
-                  reward *= (1 + recentSuccesses * 0.1) -- Momentum bonus
+              if AI.State.consecutiveHits >= 3 then
+                  reward *= (1 + AI.State.consecutiveHits * 0.12) -- Increased momentum bonus
               end
               
               -- Update current state history entry with actual reward
               if #AI.State.stateHistory > 0 then
                   AI.State.stateHistory[#AI.State.stateHistory].reward = reward
+              end
+              
+              -- Track performance for adaptive learning rate
+              table.insert(AI.State.recentPerformance, reward)
+              if #AI.State.recentPerformance > CONST.PERFORMANCE_WINDOW then
+                  table.remove(AI.State.recentPerformance, 1)
               end
           end
 
@@ -2464,6 +2533,13 @@ local function initializeCombatSystem(character)
           -- Decay feature weights if no damage (adaptive forgetting)
           AI.FeatureWeights.tacticSuccess = math.max(0.4, AI.FeatureWeights.tacticSuccess * 0.995)
           AI.FeatureWeights.comboDensity = math.max(0.5, AI.FeatureWeights.comboDensity * 0.997)
+          
+          -- Reset combo if too much time has passed without damage
+          if AI.State.comboCount > 0 and now - AI.State.lastComboTime > CONST.COMBO_WINDOW_DURATION then
+              print(`Combo broken! Was at x${AI.State.comboCount}`)
+              AI.State.comboCount = 0
+              AI.State.consecutiveHits = 0
+          end
       end
       
       AI.State.lastTargetHealth = currentTargetHealth
@@ -2473,13 +2549,21 @@ local function initializeCombatSystem(character)
       if AI.State.combatState ~= "ENGAGING" or AI.State.isFeinting then return end
       if not (AI.State.targetTorso and AI.State.targetTorso.Parent and AI.State.targetHumanoid) then return end
 
-      -- Ultra-optimized prediction with aggressive caching
-      local shouldRecalcPrediction = not AI.State.cachedPredictedPos or (now - AI.State.lastPredictionTime) > 0.08
+      -- Ultra-optimized prediction with aggressive caching and better velocity prediction
+      local shouldRecalcPrediction = not AI.State.cachedPredictedPos or (now - AI.State.lastPredictionTime) > 0.06
       if shouldRecalcPrediction then
           local ping = player:GetNetworkPing()
           local velocity = AI.State.targetTorso.AssemblyLinearVelocity
-          -- Simplified prediction for speed
-          AI.State.cachedPredictedPos = AI.State.targetTorso.Position + velocity * (CONST.BASE_PREDICTION_TIME + ping * 0.5)
+          -- Improved prediction with acceleration consideration
+          local velocityMag = velocity.Magnitude
+          local predictionTime = CONST.BASE_PREDICTION_TIME + ping * 0.4
+          
+          -- If target is moving fast, predict further ahead
+          if velocityMag > 30 then
+              predictionTime *= 1.2
+          end
+          
+          AI.State.cachedPredictedPos = AI.State.targetTorso.Position + velocity * predictionTime
           AI.State.lastPredictionTime = now
       end
       
@@ -2528,18 +2612,46 @@ local function initializeCombatSystem(character)
       if damageTaken > 0 then
           local penalty = damageTaken * CONST.PENALTY_DAMAGE_TAKEN_MULTIPLIER
           local failedAction = AI.State.lastAction
+          
+          -- Break combo on damage taken
+          if AI.State.comboCount > 0 then
+              print(`Combo broken by damage! Lost x${AI.State.comboCount} combo`)
+              AI.State.comboCount = 0
+              AI.State.consecutiveHits = 0
+              -- Extra penalty for losing a good combo
+              penalty *= (1 + AI.State.comboCount * 0.1)
+          end
+          
           if AI.State.isPerfectDodging and os.clock() > AI.State.dodgeStartTime then -- Check if dodge was active
               failedAction = "EVADE"
-              AI.Learning.Reinforce(AI.State.currentTactic, "EVADE", CONST.PENALTY_FAILED_ACTION, currentState)
+              -- Stronger penalty for failed dodges
+              AI.Learning.Reinforce(AI.State.currentTactic, "EVADE", CONST.PENALTY_FAILED_ACTION * 1.5, currentState)
           else
               AI.Learning.Reinforce(AI.State.currentTactic, failedAction, penalty, currentState)
           end
           AI.State.isPerfectDodging = false
+          
+          -- Track negative performance
+          table.insert(AI.State.recentPerformance, penalty)
+          if #AI.State.recentPerformance > CONST.PERFORMANCE_WINDOW then
+              table.remove(AI.State.recentPerformance, 1)
+          end
       elseif AI.State.isPerfectDodging and AI.State.isTargetAttacking then
-          AI.Learning.Reinforce(AI.State.currentTactic, "EVADE", CONST.REWARD_PERFECT_DODGE, currentState)
+          -- Perfect dodge reward with bonus based on how aggressive opponent was
+          local dodgeReward = CONST.REWARD_PERFECT_DODGE
+          if AI.OpponentModel.aggressionScore > 0.7 then
+              dodgeReward *= 1.3 -- Extra reward for dodging aggressive opponents
+          end
+          AI.Learning.Reinforce(AI.State.currentTactic, "EVADE", dodgeReward, currentState)
           AI.State.punishWindowEndTime = os.clock() + CONST.PUNISH_WINDOW_DURATION
           print("Perfect Dodge! Opening Punish Window.")
           AI.State.isPerfectDodging = false
+          
+          -- Track positive performance
+          table.insert(AI.State.recentPerformance, dodgeReward)
+          if #AI.State.recentPerformance > CONST.PERFORMANCE_WINDOW then
+              table.remove(AI.State.recentPerformance, 1)
+          end
       end
       AI.State.myHealth = newHealth
   end))
