@@ -2481,15 +2481,17 @@ local function initializeCombatSystem(character)
                   AI.State.consecutiveHits += 1
                   AI.State.lastComboTime = now
                   -- Progressive combo multiplier (gets better with more hits)
+                  -- Formula: 1.0 + (count * 0.15) means 1st hit = 1.15x, 2nd = 1.30x, etc.
+                  -- This rewards combo initiation and encourages aggressive chaining
                   local comboMultiplier = 1.0 + (AI.State.comboCount * 0.15)
-                  reward *= math.min(comboMultiplier, 2.5) -- Cap at 2.5x
+                  reward *= math.min(comboMultiplier, 2.5) -- Cap at 2.5x (achieved at ~10 hits)
                   print(`Combo x${AI.State.comboCount}! Reward multiplier: ${comboMultiplier}`)
               else
                   -- Start new combo if window expired
                   if AI.State.comboCount > 0 then
                       print(`Combo ended at x${AI.State.comboCount}`)
                   end
-                  AI.State.comboCount = 1 -- Start new combo with first hit
+                  AI.State.comboCount = 1 -- Start at 1 to reward combo initiation (1.15x multiplier)
                   AI.State.consecutiveHits = 1
                   AI.State.lastComboTime = now
               end
