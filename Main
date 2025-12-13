@@ -119,11 +119,11 @@ local AI = {
   AvailableMoves = {},
   ActionStats = { -- Persistent learning data.
       totalTrials = 0,
-      Aggressive = { total = 0, ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 } },
-      Defensive = { total = 0, ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 } },
-      BaitAndPunish = { total = 0, ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 } },
-      Finisher = { total = 0, ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 } },
-      ExploitSeeker = { total = 0, ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 } },
+      Aggressive = { total = 0, ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
+      Defensive = { total = 0, ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
+      BaitAndPunish = { total = 0, ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
+      Finisher = { total = 0, ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
+      ExploitSeeker = { total = 0, ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
   },
   --// EXPERIENCE REPLAY: Store past experiences for better learning with prioritization
   ExperienceBuffer = {
@@ -149,7 +149,7 @@ local AI = {
   },
   --// OPPONENT MODEL: Track opponent patterns for prediction
   OpponentModel = {
-      actionFrequency = { ATTACK = 0, SPECIAL = 0, EVADE = 0, FEINT = 0, REPOSITION = 0 },
+      actionFrequency = { ATTACK = 0, SPECIAL = 0, EVADE = 0, FEINT = 0, REPOSITION = 0, DASH = 0, BLOCK = 0 },
       lastActions = {},
       maxHistorySize = 20,
       predictedNextAction = "ATTACK",
@@ -164,11 +164,11 @@ local AI = {
   },
   --// DOUBLE Q-LEARNING: Two separate Q-value estimators
   QNetworkB = {
-      Aggressive = { ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 } },
-      Defensive = { ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 } },
-      BaitAndPunish = { ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 } },
-      Finisher = { ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 } },
-      ExploitSeeker = { ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 } },
+      Aggressive = { ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
+      Defensive = { ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
+      BaitAndPunish = { ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
+      Finisher = { ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
+      ExploitSeeker = { ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
   },
   --// META-LEARNING: Adaptive learning parameters
   MetaLearning = {
@@ -199,7 +199,7 @@ local AI = {
       advantageNet = {
           layer1 = { weights = {}, biases = {}, size = 32, activations = {}, gradients = {}, layerNormGain = {}, layerNormBias = {} },
           layer2 = { weights = {}, biases = {}, size = 24, activations = {}, gradients = {}, layerNormGain = {}, layerNormBias = {} },
-          layer3 = { weights = {}, biases = {}, size = 5, activations = {}, gradients = {} }, -- Output: 5 actions (ATTACK, SPECIAL, EVADE, FEINT, REPOSITION)
+          layer3 = { weights = {}, biases = {}, size = 7, activations = {}, gradients = {} }, -- Output: 7 actions (ATTACK, SPECIAL, EVADE, FEINT, REPOSITION, DASH, BLOCK)
       },
       -- Target networks (for stable learning)
       targetValueNet = {
@@ -210,13 +210,13 @@ local AI = {
       targetAdvantageNet = {
           layer1 = { weights = {}, biases = {}, size = 32, activations = {}, gradients = {}, layerNormGain = {}, layerNormBias = {} },
           layer2 = { weights = {}, biases = {}, size = 24, activations = {}, gradients = {}, layerNormGain = {}, layerNormBias = {} },
-          layer3 = { weights = {}, biases = {}, size = 5, activations = {}, gradients = {} },
+          layer3 = { weights = {}, biases = {}, size = 7, activations = {}, gradients = {} },
       },
       -- Policy Network (Actor-Critic)
       policyNet = {
           layer1 = { weights = {}, biases = {}, size = 28, activations = {}, gradients = {}, layerNormGain = {}, layerNormBias = {} },
           layer2 = { weights = {}, biases = {}, size = 20, activations = {}, gradients = {}, layerNormGain = {}, layerNormBias = {} },
-          layer3 = { weights = {}, biases = {}, size = 5, activations = {}, gradients = {} }, -- Output: action probabilities
+          layer3 = { weights = {}, biases = {}, size = 7, activations = {}, gradients = {} }, -- Output: action probabilities
       },
       -- Noisy Network parameters
       noisyNets = {
@@ -272,7 +272,7 @@ local AI = {
       -- ICM Inverse Model (predicts action from state transition)
       inverseModel = {
           layer1 = { weights = {}, biases = {}, size = 16, activations = {}, gradients = {} },
-          layer2 = { weights = {}, biases = {}, size = 5, activations = {}, gradients = {} }, -- Output: action logits
+          layer2 = { weights = {}, biases = {}, size = 7, activations = {}, gradients = {} }, -- Output: action logits
       },
       -- State encoder for novelty detection
       stateEncoder = {
@@ -290,7 +290,7 @@ local AI = {
       quantileNet = {
           layer1 = { weights = {}, biases = {}, size = 32, activations = {}, gradients = {} },
           layer2 = { weights = {}, biases = {}, size = 24, activations = {}, gradients = {} },
-          layer3 = { weights = {}, biases = {}, size = 25, activations = {}, gradients = {} }, -- 5 actions * 5 quantiles
+          layer3 = { weights = {}, biases = {}, size = 35, activations = {}, gradients = {} }, -- 7 actions * 5 quantiles
       },
       quantiles = {}, -- Cached quantile predictions
       kappa = 1.0, -- Huber loss threshold
@@ -668,7 +668,7 @@ local function InitializeDeepNetworks()
     for i = 1, AI.DeepNetwork.ensembleSize do
         AI.DeepNetwork.ensembleNetworks[i] = {
             valueNet = { layer1 = { weights = {}, biases = {}, size = 24, activations = {}, gradients = {} }, layer2 = { weights = {}, biases = {}, size = 16, activations = {}, gradients = {} }, layer3 = { weights = {}, biases = {}, size = 1, activations = {}, gradients = {} } },
-            advantageNet = { layer1 = { weights = {}, biases = {}, size = 24, activations = {}, gradients = {} }, layer2 = { weights = {}, biases = {}, size = 16, activations = {}, gradients = {} }, layer3 = { weights = {}, biases = {}, size = 5, activations = {}, gradients = {} } },
+            advantageNet = { layer1 = { weights = {}, biases = {}, size = 24, activations = {}, gradients = {} }, layer2 = { weights = {}, biases = {}, size = 16, activations = {}, gradients = {} }, layer3 = { weights = {}, biases = {}, size = 7, activations = {}, gradients = {} } },
         }
         InitializeNetwork(AI.DeepNetwork.ensembleNetworks[i].valueNet, AI.DeepNetwork.inputSize)
         InitializeNetwork(AI.DeepNetwork.ensembleNetworks[i].advantageNet, AI.DeepNetwork.inputSize)
@@ -789,8 +789,8 @@ local function initializeCombatSystem(character)
       AGGRO_RANGE = 200, ATTACK_RANGE = characterInfo.AttackRange or 30, KITE_RANGE = characterInfo.KiteRange or 40,
       TARGET_SCAN_INTERVAL = 0.3, -- Reduced from 0.5 for faster target acquisition
       MAX_ENERGY = 500, ENERGY_REGEN_RATE = 100,
-      COSTS = { SPECIAL = 10, DASH = 2, FEINT = 1, ATTACK = 0, REPOSITION = 0 },
-      ATTACK_COOLDOWN = 0.015, SPECIAL_MOVE_COOLDOWN = 0.3, DASH_COOLDOWN = 0.05, FEINT_COOLDOWN = 0.75, -- Ultra-fast reactions
+      COSTS = { SPECIAL = 10, DASH = 2, FEINT = 1, BLOCK = 1, ATTACK = 0, REPOSITION = 0 },
+      ATTACK_COOLDOWN = 0.015, SPECIAL_MOVE_COOLDOWN = 0.3, DASH_COOLDOWN = 0.05, FEINT_COOLDOWN = 0.75, BLOCK_COOLDOWN = 0.5, -- Ultra-fast reactions
       FEINT_DURATION = 0.18, FEINT_SUCCESS_DISTANCE = 5,
       PERFECT_DODGE_WINDOW = 0.65, PUNISH_WINDOW_DURATION = 2.8, COMBO_WINDOW_DURATION = 2.8, -- Increased windows for more opportunities
       BASE_PREDICTION_TIME = 0.012, -- Further optimized prediction
@@ -843,12 +843,13 @@ local function initializeCombatSystem(character)
       AI.State = {
           currentTarget = nil, targetHumanoid = nil, targetTorso = nil,
           combatState = "IDLE", currentTactic = "BaitAndPunish",
-          lastActionTimes = { ATTACK = 0, SPECIAL = 0, EVADE = 0, FEINT = 0 },
+          lastActionTimes = { ATTACK = 0, SPECIAL = 0, EVADE = 0, FEINT = 0, DASH = 0, BLOCK = 0 },
           strafeDirection = 1, lastStrafeChange = 0, lastAction = "IDLE",
           lastTargetScanTime = 0, currentEnergy = maxEnergy,
           lastTargetHealth = 0, myHealth = humanoid.Health,
           isFeinting = false, feintStartTime = 0, distanceAtFeintStart = 0,
           isPerfectDodging = false, dodgeStartTime = 0,
+          isBlocking = false, blockStartTime = 0,
           punishWindowEndTime = 0, comboStateEndTime = 0,
           glitchComboWindowEndTime = 0,
           tacticConfidence = 100, lastTacticChangeTime = 0,
@@ -1788,7 +1789,7 @@ local function initializeCombatSystem(character)
           end
           
           -- Encode action for LSTM processing
-          local actionEncoding = ({ATTACK=1.0, SPECIAL=0.8, EVADE=-0.5, FEINT=-0.3, REPOSITION=0.0})[observedAction] or 0
+          local actionEncoding = ({ATTACK=1.0, SPECIAL=0.8, EVADE=-0.5, FEINT=-0.3, REPOSITION=0.0, DASH=0.3, BLOCK=-0.7})[observedAction] or 0
           AI.DeepLearning.UpdateLSTMOpponentModel(actionEncoding)
           
           -- Calculate aggression score based on action patterns
@@ -2011,13 +2012,15 @@ local function initializeCombatSystem(character)
       possibleActions.SPECIAL = (now - AI.State.lastActionTimes.SPECIAL > CONST.SPECIAL_MOVE_COOLDOWN) and (state.energy >= CONST.COSTS.SPECIAL) and state.inRange and (#AI.AvailableMoves > 0)
       possibleActions.EVADE = (now - AI.State.lastActionTimes.EVADE > CONST.DASH_COOLDOWN) and (state.energy >= CONST.COSTS.DASH)
       possibleActions.FEINT = (now - AI.State.lastActionTimes.FEINT > CONST.FEINT_COOLDOWN) and (state.energy >= CONST.COSTS.FEINT) and state.inRange
+      possibleActions.DASH = (now - AI.State.lastActionTimes.DASH > CONST.DASH_COOLDOWN) and (state.energy >= CONST.COSTS.DASH)
+      possibleActions.BLOCK = (now - AI.State.lastActionTimes.BLOCK > CONST.BLOCK_COOLDOWN) and (state.energy >= CONST.COSTS.BLOCK) and not AI.State.isBlocking
       possibleActions.REPOSITION = true
 
       -- ExploitSeeker uses pure random exploration
       if tactic == "ExploitSeeker" then
           local actionPool = {}
           for action, available in pairs(possibleActions) do
-              if available and (action == "ATTACK" or action == "SPECIAL" or action == "EVADE" or action == "FEINT") then
+              if available and (action == "ATTACK" or action == "SPECIAL" or action == "EVADE" or action == "FEINT" or action == "DASH" or action == "BLOCK") then
                   table.insert(actionPool, action)
               end
           end
@@ -2056,7 +2059,7 @@ local function initializeCombatSystem(character)
       end
 
       -- Build action scores with deep learning integration
-      local actionMap = {ATTACK=1, SPECIAL=2, EVADE=3, FEINT=4, REPOSITION=5}
+      local actionMap = {ATTACK=1, SPECIAL=2, EVADE=3, FEINT=4, REPOSITION=5, DASH=6, BLOCK=7}
       for action, available in pairs(possibleActions) do
           if available then
               local statsA = tacticStatsA[action]
@@ -2132,6 +2135,32 @@ local function initializeCombatSystem(character)
               end
               if (tactic == "BaitAndPunish" or tactic == "Defensive") and action == "EVADE" then 
                   modifier *= 1.7 -- Increased for defensive tactics
+              end
+              
+              -- DASH action modifiers - aggressive repositioning
+              if action == "DASH" then
+                  if tactic == "Aggressive" or tactic == "Finisher" then
+                      modifier *= 1.5 -- Encourage dash for aggressive tactics
+                  end
+                  if state.distance > CONST.ATTACK_RANGE * 1.2 then
+                      modifier *= 1.3 -- Use dash to close distance
+                  end
+              end
+              
+              -- BLOCK action modifiers - defensive response
+              if action == "BLOCK" then
+                  if state.isTargetAttacking then
+                      modifier *= 2.5 -- Strong preference for blocking when under attack
+                  end
+                  if tactic == "Defensive" then
+                      modifier *= 1.8 -- Defensive tactics favor blocking
+                  end
+                  if state.myHealthPercent < 0.3 then
+                      modifier *= 1.6 -- Block more when low health
+                  end
+                  if AI.OpponentModel.aggressionScore > 0.7 then
+                      modifier *= 1.4 -- Block more against aggressive opponents
+                  end
               end
               if action == "ATTACK" and inCombo then
                   -- Enhanced combo encouragement with improved exponential scaling
@@ -2360,6 +2389,20 @@ local function initializeCombatSystem(character)
           communicateEvent:FireServer({["Dash"]=perpendicular.Unit, ["Key"]="Q", ["Goal"]="KeyPress"})
           AI.State.lastActionTimes.EVADE = now
           AI.State.isPerfectDodging, AI.State.dodgeStartTime = true, now
+      elseif action == "DASH" then
+          -- Dash with W+Q key combination
+          communicateEvent:FireServer({["Dash"]=Enum.KeyCode.W, ["Key"]=Enum.KeyCode.Q, ["Goal"]="KeyPress"})
+          AI.State.lastActionTimes.DASH = now
+      elseif action == "BLOCK" then
+          -- Block with F key
+          communicateEvent:FireServer({["Goal"]="KeyPress", ["Key"]=Enum.KeyCode.F})
+          AI.State.lastActionTimes.BLOCK = now
+          AI.State.isBlocking = true
+          AI.State.blockStartTime = now
+      elseif action == "BLOCK_RELEASE" then
+          -- Release block
+          communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=Enum.KeyCode.F})
+          AI.State.isBlocking = false
       elseif action == "REPOSITION" then
           if now - AI.State.lastStrafeChange > (0.8 + math.random() * 0.4) then -- Faster strafe changes
               AI.State.strafeDirection *= -1
@@ -2564,6 +2607,19 @@ local function initializeCombatSystem(character)
       if not AI.State.currentTarget or not AI.State.targetHumanoid or not AI.State.targetTorso then return end
 
       local tactic = AI.State.currentTactic
+
+      -- Block auto-release after duration or when target stops attacking
+      if AI.State.isBlocking then
+          local blockDuration = 1.5 -- Block for up to 1.5 seconds
+          if now > AI.State.blockStartTime + blockDuration or not AI.State.isTargetAttacking then
+              -- Auto-release block
+              if communicateEvent then
+                  communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=Enum.KeyCode.F})
+              end
+              AI.State.isBlocking = false
+              print("Block released")
+          end
+      end
 
       -- Feint evaluation (optimized timing check)
       if AI.State.isFeinting and now > AI.State.feintStartTime + CONST.FEINT_DURATION then
