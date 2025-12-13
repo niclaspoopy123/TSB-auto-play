@@ -2020,7 +2020,7 @@ local function initializeCombatSystem(character)
       if tactic == "ExploitSeeker" then
           local actionPool = {}
           for action, available in pairs(possibleActions) do
-              if available and (action == "ATTACK" or action == "SPECIAL" or action == "EVADE" or action == "FEINT" or action == "DASH" or action == "BLOCK") then
+              if available and action ~= "REPOSITION" then -- Exclude REPOSITION from random pool
                   table.insert(actionPool, action)
               end
           end
