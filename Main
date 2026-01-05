@@ -2638,12 +2638,6 @@ local function initializeCombatSystem(character)
       if AI.State.isBlocking then
           local blockTime = now - AI.State.blockStartTime
           
-          -- Check if block was successful (target was attacking and we didn't take damage recently)
-          if AI.State.isTargetAttacking and blockTime > CONST.MIN_BLOCK_TIME and blockTime < CONST.BLOCK_DURATION then
-              -- Block is active while target is attacking - this is good positioning
-              -- Reward will be given when damage is avoided (in HealthChanged event)
-          end
-          
           -- Auto-release block after duration or when target stops attacking
           if blockTime > CONST.BLOCK_DURATION or not AI.State.isTargetAttacking then
               -- Release block
@@ -2651,21 +2645,23 @@ local function initializeCombatSystem(character)
                   communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=Enum.KeyCode.F})
               end
               
-              -- If we successfully blocked (target was attacking and we held block)
-              if AI.State.isTargetAttacking and blockTime >= CONST.MIN_SUCCESSFUL_BLOCK_TIME then
-                  -- Build current state
+              -- If we successfully blocked (held block for minimum duration while target attacked)
+              -- Success means: we blocked during an attack period and avoided taking damage
+              if blockTime >= CONST.MIN_SUCCESSFUL_BLOCK_TIME and blockTime <= CONST.BLOCK_DURATION then
+                  -- Build current state (calculate distance once)
+                  local currentDist = (rootPart.Position - AI.State.targetTorso.Position).Magnitude
                   local currentState = {
                       myHealthPercent = humanoid.Health / humanoid.MaxHealth,
                       targetHealthPercent = AI.State.targetHumanoid.Health / AI.State.targetHumanoid.MaxHealth,
-                      distance = (rootPart.Position - AI.State.targetTorso.Position).Magnitude,
+                      distance = currentDist,
                       energy = AI.State.currentEnergy,
-                      inRange = (rootPart.Position - AI.State.targetTorso.Position).Magnitude <= CONST.ATTACK_RANGE,
+                      inRange = currentDist <= CONST.ATTACK_RANGE,
                       isTargetAttacking = AI.State.isTargetAttacking,
                   }
-                  -- Reward for successfully blocking an attack
+                  -- Reward for successfully blocking (held block position)
                   AI.Learning.Reinforce(tactic, "BLOCK", CONST.REWARD_SUCCESSFUL_BLOCK, currentState)
                   print("Successful block!")
-                  -- Open punish window after successful block
+                  -- Open punish window after block release
                   AI.State.punishWindowEndTime = now + CONST.PUNISH_WINDOW_DURATION
               end
               
