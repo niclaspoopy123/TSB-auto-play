@@ -836,6 +836,11 @@ local function initializeCombatSystem(character)
       GLITCH_VELOCITY_THRESHOLD = 350,
       GLITCH_DETECTION_REWARD = 20, -- Increased glitch detection reward
       GLITCH_COMBO_WINDOW_DURATION = 1.5,
+      -- Block timing constants
+      BLOCK_DURATION = 1.5, -- Maximum block duration
+      MIN_BLOCK_TIME = 0.1, -- Minimum time before block validation
+      MIN_SUCCESSFUL_BLOCK_TIME = 0.3, -- Minimum time to count as successful block
+      REWARD_SUCCESSFUL_BLOCK = 20, -- Reward for successfully blocking an attack
   }
 
   --// --- STATE MANAGEMENT ---
@@ -2631,24 +2636,23 @@ local function initializeCombatSystem(character)
 
       -- Block management and reward handling
       if AI.State.isBlocking then
-          local blockDuration = 1.5 -- Block for up to 1.5 seconds
           local blockTime = now - AI.State.blockStartTime
           
           -- Check if block was successful (target was attacking and we didn't take damage recently)
-          if AI.State.isTargetAttacking and blockTime > 0.1 and blockTime < blockDuration then
+          if AI.State.isTargetAttacking and blockTime > CONST.MIN_BLOCK_TIME and blockTime < CONST.BLOCK_DURATION then
               -- Block is active while target is attacking - this is good positioning
               -- Reward will be given when damage is avoided (in HealthChanged event)
           end
           
           -- Auto-release block after duration or when target stops attacking
-          if blockTime > blockDuration or not AI.State.isTargetAttacking then
+          if blockTime > CONST.BLOCK_DURATION or not AI.State.isTargetAttacking then
               -- Release block
               if communicateEvent then
                   communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=Enum.KeyCode.F})
               end
               
               -- If we successfully blocked (target was attacking and we held block)
-              if AI.State.isTargetAttacking and blockTime >= 0.3 then
+              if AI.State.isTargetAttacking and blockTime >= CONST.MIN_SUCCESSFUL_BLOCK_TIME then
                   -- Build current state
                   local currentState = {
                       myHealthPercent = humanoid.Health / humanoid.MaxHealth,
@@ -2659,7 +2663,7 @@ local function initializeCombatSystem(character)
                       isTargetAttacking = AI.State.isTargetAttacking,
                   }
                   -- Reward for successfully blocking an attack
-                  AI.Learning.Reinforce(tactic, "BLOCK", 20, currentState)
+                  AI.Learning.Reinforce(tactic, "BLOCK", CONST.REWARD_SUCCESSFUL_BLOCK, currentState)
                   print("Successful block!")
                   -- Open punish window after successful block
                   AI.State.punishWindowEndTime = now + CONST.PUNISH_WINDOW_DURATION
