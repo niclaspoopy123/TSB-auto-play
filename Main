@@ -2645,9 +2645,9 @@ local function initializeCombatSystem(character)
                   communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=Enum.KeyCode.F})
               end
               
-              -- If we successfully blocked (held block for minimum duration while target attacked)
-              -- Success means: we blocked during an attack period and avoided taking damage
-              if blockTime >= CONST.MIN_SUCCESSFUL_BLOCK_TIME and blockTime <= CONST.BLOCK_DURATION then
+              -- If we successfully blocked (held block for minimum duration)
+              -- Success means: we blocked for long enough to be considered defensive positioning
+              if blockTime >= CONST.MIN_SUCCESSFUL_BLOCK_TIME then
                   -- Build current state (calculate distance once)
                   local currentDist = (rootPart.Position - AI.State.targetTorso.Position).Magnitude
                   local currentState = {
