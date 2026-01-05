@@ -2390,8 +2390,29 @@ local function initializeCombatSystem(character)
           AI.State.lastActionTimes.EVADE = now
           AI.State.isPerfectDodging, AI.State.dodgeStartTime = true, now
       elseif action == "DASH" then
-          -- Dash with W+Q key combination
-          communicateEvent:FireServer({["Dash"]=Enum.KeyCode.W, ["Key"]=Enum.KeyCode.Q, ["Goal"]="KeyPress"})
+          -- Smart dash direction based on tactical situation
+          local dashDirection
+          local currentDist = (rootPart.Position - targetPos).Magnitude
+          
+          -- Choose dash direction based on tactic and distance
+          if AI.State.currentTactic == "Defensive" or state.myHealthPercent < 0.3 then
+              -- Backdash when defensive or low health
+              dashDirection = Enum.KeyCode.S
+          elseif AI.State.currentTactic == "Aggressive" or AI.State.currentTactic == "Finisher" then
+              -- Forward dash when aggressive
+              dashDirection = Enum.KeyCode.W
+          elseif currentDist > CONST.ATTACK_RANGE * 1.5 then
+              -- Forward dash to close distance
+              dashDirection = Enum.KeyCode.W
+          elseif currentDist < CONST.ATTACK_RANGE * 0.5 then
+              -- Backdash to create space when too close
+              dashDirection = Enum.KeyCode.S
+          else
+              -- Side dash for repositioning (randomly left or right)
+              dashDirection = math.random() > 0.5 and Enum.KeyCode.A or Enum.KeyCode.D
+          end
+          
+          communicateEvent:FireServer({["Dash"]=dashDirection, ["Key"]=Enum.KeyCode.Q, ["Goal"]="KeyPress"})
           AI.State.lastActionTimes.DASH = now
       elseif action == "BLOCK" then
           -- Block with F key
@@ -2608,14 +2629,42 @@ local function initializeCombatSystem(character)
 
       local tactic = AI.State.currentTactic
 
-      -- Block auto-release after duration or when target stops attacking
+      -- Block management and reward handling
       if AI.State.isBlocking then
           local blockDuration = 1.5 -- Block for up to 1.5 seconds
-          if now > AI.State.blockStartTime + blockDuration or not AI.State.isTargetAttacking then
-              -- Auto-release block
+          local blockTime = now - AI.State.blockStartTime
+          
+          -- Check if block was successful (target was attacking and we didn't take damage recently)
+          if AI.State.isTargetAttacking and blockTime > 0.1 and blockTime < blockDuration then
+              -- Block is active while target is attacking - this is good positioning
+              -- Reward will be given when damage is avoided (in HealthChanged event)
+          end
+          
+          -- Auto-release block after duration or when target stops attacking
+          if blockTime > blockDuration or not AI.State.isTargetAttacking then
+              -- Release block
               if communicateEvent then
                   communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=Enum.KeyCode.F})
               end
+              
+              -- If we successfully blocked (target was attacking and we held block)
+              if AI.State.isTargetAttacking and blockTime >= 0.3 then
+                  -- Build current state
+                  local currentState = {
+                      myHealthPercent = humanoid.Health / humanoid.MaxHealth,
+                      targetHealthPercent = AI.State.targetHumanoid.Health / AI.State.targetHumanoid.MaxHealth,
+                      distance = (rootPart.Position - AI.State.targetTorso.Position).Magnitude,
+                      energy = AI.State.currentEnergy,
+                      inRange = (rootPart.Position - AI.State.targetTorso.Position).Magnitude <= CONST.ATTACK_RANGE,
+                      isTargetAttacking = AI.State.isTargetAttacking,
+                  }
+                  -- Reward for successfully blocking an attack
+                  AI.Learning.Reinforce(tactic, "BLOCK", 20, currentState)
+                  print("Successful block!")
+                  -- Open punish window after successful block
+                  AI.State.punishWindowEndTime = now + CONST.PUNISH_WINDOW_DURATION
+              end
+              
               AI.State.isBlocking = false
               print("Block released")
           end
@@ -2875,6 +2924,16 @@ local function initializeCombatSystem(character)
               failedAction = "EVADE"
               -- Stronger penalty for failed dodges
               AI.Learning.Reinforce(AI.State.currentTactic, "EVADE", CONST.PENALTY_FAILED_ACTION * 1.5, currentState)
+          elseif AI.State.isBlocking then
+              -- Failed block - took damage while blocking
+              failedAction = "BLOCK"
+              AI.Learning.Reinforce(AI.State.currentTactic, "BLOCK", CONST.PENALTY_FAILED_ACTION * 1.3, currentState)
+              -- Release block since it failed
+              if communicateEvent then
+                  communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=Enum.KeyCode.F})
+              end
+              AI.State.isBlocking = false
+              print("Block failed - took damage")
           else
               AI.Learning.Reinforce(AI.State.currentTactic, failedAction, penalty, currentState)
           end
