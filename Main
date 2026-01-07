@@ -496,9 +496,23 @@ local function Tanh(x)
     return (exp2x - 1) / (exp2x + 1)
 end
 
+-- Helper function to find max value in array (safer than table.unpack for large arrays)
+local function FindMax(arr)
+    if #arr == 0 then return 0 end
+    local maxVal = arr[1]
+    for i = 2, #arr do
+        if arr[i] > maxVal then
+            maxVal = arr[i]
+        end
+    end
+    return maxVal
+end
+
 -- Softmax for probability distributions
 local function Softmax(outputs)
-    local maxVal = math.max(table.unpack(outputs))
+    if #outputs == 0 then return {} end
+    
+    local maxVal = FindMax(outputs)
     local expSum = 0
     local result = {}
     
@@ -507,8 +521,16 @@ local function Softmax(outputs)
         expSum += result[i]
     end
     
-    for i = 1, #result do
-        result[i] = result[i] / expSum
+    -- Prevent division by zero
+    if expSum == 0 then
+        -- Return uniform distribution
+        for i = 1, #result do
+            result[i] = 1 / #result
+        end
+    else
+        for i = 1, #result do
+            result[i] = result[i] / expSum
+        end
     end
     
     return result
@@ -1375,9 +1397,11 @@ local function initializeCombatSystem(character)
       end
       
       -- Normalize weights
-      local maxWeight = math.max(table.unpack(weights))
-      for i = 1, #weights do
-          weights[i] = weights[i] / maxWeight
+      local maxWeight = FindMax(weights)
+      if maxWeight > 0 then
+          for i = 1, #weights do
+              weights[i] = weights[i] / maxWeight
+          end
       end
       
       return samples, indices, weights
@@ -1517,16 +1541,16 @@ local function initializeCombatSystem(character)
               local quantiles = AI.DeepLearning.PredictQuantiles(nextStateEncoded)
               if quantiles then
                   local qValues = AI.DeepLearning.QuantilesToQValues(quantiles)
-                  nextMaxQValue = math.max(table.unpack(qValues))
+                  nextMaxQValue = FindMax(qValues)
               end
           else
               -- Use ensemble for robust predictions
               local ensembleQValues = AI.DeepLearning.EnsemblePredict(nextStateEncoded)
-              nextMaxQValue = math.max(table.unpack(ensembleQValues))
+              nextMaxQValue = FindMax(ensembleQValues)
               
               -- Also get target network prediction for Double DQN
               local targetQValues = AI.DeepLearning.PredictQValues(nextStateEncoded, true)
-              local targetMaxQ = math.max(table.unpack(targetQValues))
+              local targetMaxQ = FindMax(targetQValues)
               
               -- Average ensemble and target network (more stable)
               nextMaxQValue = (nextMaxQValue + targetMaxQ) / 2
@@ -1636,14 +1660,14 @@ local function initializeCombatSystem(character)
               local nextQValuesTarget = AI.DeepLearning.PredictQValues(nextStateEncoded, true)
               
               -- Double DQN: Select action with main network, evaluate with target
-              local nextMaxQ = math.max(table.unpack(nextQValuesTarget))
+              local nextMaxQ = FindMax(nextQValuesTarget)
               
               -- Use distributional RL if enabled
               if AI.DistributionalRL.enabled then
                   local quantiles = AI.DeepLearning.PredictQuantiles(nextStateEncoded)
                   if quantiles then
                       local qValues = AI.DeepLearning.QuantilesToQValues(quantiles)
-                      nextMaxQ = math.max(table.unpack(qValues))
+                      nextMaxQ = FindMax(qValues)
                   end
               end
               
@@ -2069,6 +2093,13 @@ local function initializeCombatSystem(character)
           if available then
               local statsA = tacticStatsA[action]
               local statsB = tacticStatsB[action]
+              
+              -- Safety check: Ensure stats exist
+              if not statsA then
+                  warn("Missing statsA for action:", action, "in tactic:", tactic)
+                  statsA = { count = 0, value = 0, eligibility = 0 }
+              end
+              
               local actionIdx = actionMap[action]
               local score
               
@@ -2385,6 +2416,12 @@ local function initializeCombatSystem(character)
       elseif action == "EVADE" then
           -- Smarter evade direction based on target velocity
           local targetVelocity = AI.State.targetTorso.AssemblyLinearVelocity
+          
+          -- Safety check for velocity
+          if not targetVelocity then
+              targetVelocity = Vector3.new(0, 0, 0)
+          end
+          
           local perpendicular = rootPart.CFrame.RightVector * (math.random() > 0.5 and 1 or -1)
           if targetVelocity.Magnitude > 10 then
               -- Dodge perpendicular to target's movement (+90 degree rotation in horizontal plane)
@@ -2820,6 +2857,12 @@ local function initializeCombatSystem(character)
       if shouldRecalcPrediction then
           local ping = player:GetNetworkPing()
           local velocity = AI.State.targetTorso.AssemblyLinearVelocity
+          
+          -- Safety check for velocity
+          if not velocity then
+              velocity = Vector3.new(0, 0, 0)
+          end
+          
           local velocityMag = velocity.Magnitude
           
           -- Adaptive prediction time based on velocity and ping
