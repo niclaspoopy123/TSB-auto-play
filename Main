@@ -522,10 +522,12 @@ local function Softmax(outputs)
     end
     
     -- Prevent division by zero
-    if expSum == 0 then
-        -- Return uniform distribution
-        for i = 1, #result do
-            result[i] = 1 / #result
+    if expSum == 0 or #result == 0 then
+        -- Return uniform distribution (avoid division by zero)
+        if #result > 0 then
+            for i = 1, #result do
+                result[i] = 1 / #result
+            end
         end
     else
         for i = 1, #result do
@@ -2099,7 +2101,7 @@ local function initializeCombatSystem(character)
               
               -- Safety check: Ensure stats exist
               if not statsA then
-                  warn("Missing statsA for action:", action, "in tactic:", tactic)
+                  warn("Missing statsA for action:", action)
                   statsA = { count = 0, value = 0, eligibility = 0 }
               end
               
