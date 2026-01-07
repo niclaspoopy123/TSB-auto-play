@@ -808,6 +808,7 @@ local function initializeCombatSystem(character)
   --// --- CONSTANTS ---
   -- Centralized constants for easy tuning of the AI's behavior.
   local CONST = {
+      DEBUG_MODE = false, -- Set to true for detailed logging
       AGGRO_RANGE = 200, ATTACK_RANGE = characterInfo.AttackRange or 30, KITE_RANGE = characterInfo.KiteRange or 40,
       TARGET_SCAN_INTERVAL = 0.3, -- Reduced from 0.5 for faster target acquisition
       MAX_ENERGY = 500, ENERGY_REGEN_RATE = 100,
@@ -2029,7 +2030,9 @@ local function initializeCombatSystem(character)
       end
 
       if isCapitalizeWindow() and state.inRange then
-          if AI.State.glitchComboWindowEndTime > now then print("Executing Glitch Combo!") end
+          if CONST.DEBUG_MODE and AI.State.glitchComboWindowEndTime > now then 
+              print("Executing Glitch Combo!") 
+          end
           if #AI.AvailableMoves > 0 and now - AI.State.lastActionTimes.SPECIAL > CONST.SPECIAL_MOVE_COOLDOWN and state.energy >= CONST.COSTS.SPECIAL then return "SPECIAL" end
           if now - AI.State.lastActionTimes.ATTACK > CONST.ATTACK_COOLDOWN then return "ATTACK" end
       end
@@ -2761,10 +2764,12 @@ local function initializeCombatSystem(character)
                   local exponentialBonus = (AI.State.comboCount ^ 1.20) * 0.05
                   local comboMultiplier = 1.0 + linearBonus + exponentialBonus
                   reward *= math.min(comboMultiplier, 3.0) -- Higher cap at 3.0x for better high-combo rewards
-                  print(`Combo x${AI.State.comboCount}! Reward multiplier: ${string.format("%.2f", comboMultiplier)}x`)
+                  if CONST.DEBUG_MODE then
+                      print(`Combo x${AI.State.comboCount}! Reward multiplier: ${string.format("%.2f", comboMultiplier)}x`)
+                  end
               else
                   -- Start new combo if window expired
-                  if AI.State.comboCount > 0 then
+                  if CONST.DEBUG_MODE and AI.State.comboCount > 0 then
                       print(`Combo ended at x${AI.State.comboCount}`)
                   end
                   AI.State.comboCount = 1 -- Start at 1 to reward combo initiation
@@ -2839,7 +2844,9 @@ local function initializeCombatSystem(character)
           
           -- Reset combo if too much time has passed without damage
           if AI.State.comboCount > 0 and now - AI.State.lastComboTime > CONST.COMBO_WINDOW_DURATION then
-              print(`Combo broken! Was at x${AI.State.comboCount}`)
+              if CONST.DEBUG_MODE then
+                  print(`Combo broken! Was at x${AI.State.comboCount}`)
+              end
               AI.State.comboCount = 0
               AI.State.consecutiveHits = 0
           end
@@ -2958,7 +2965,9 @@ local function initializeCombatSystem(character)
               -- Extra penalty for losing a good combo (calculate before reset)
               local comboPenalty = AI.State.comboCount * 0.1
               penalty *= (1 + comboPenalty)
-              print(`Combo broken by damage! Lost x${AI.State.comboCount} combo`)
+              if CONST.DEBUG_MODE then
+                  print(`Combo broken by damage! Lost x${AI.State.comboCount} combo`)
+              end
               AI.State.comboCount = 0
               AI.State.consecutiveHits = 0
           end
