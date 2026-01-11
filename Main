@@ -114,6 +114,8 @@ local TrainingMode = {
     enabled = false,
     trainingAgainstClone = false,
     cloneCharacter = nil,
+    cloneAI = nil, -- AI brain for the clone
+    cloneConnections = {}, -- Event connections for clone AI
 }
 
 --// ================= GUI CREATION ================= //
@@ -241,6 +243,11 @@ local function CreateTrainingGUI(char, rp)
         if TrainingMode.cloneCharacter then
             TrainingMode.cloneCharacter:Destroy()
         end
+        -- Disconnect clone AI connections
+        for _, conn in ipairs(TrainingMode.cloneConnections) do
+            conn:Disconnect()
+        end
+        TrainingMode.cloneConnections = {}
         
         local clone = Instance.new("Model")
         clone.Name = "AI_Clone_Dummy"
@@ -274,7 +281,7 @@ local function CreateTrainingGUI(char, rp)
         clone.Parent = Workspace
         TrainingMode.cloneCharacter = clone
         
-        print("AI Clone created for training")
+        print("AI Clone created for training (from GUI)")
         return clone
     end
     
@@ -295,6 +302,11 @@ local function CreateTrainingGUI(char, rp)
             TrainingMode.cloneCharacter:Destroy()
             TrainingMode.cloneCharacter = nil
         end
+        -- Disconnect clone AI connections
+        for _, conn in ipairs(TrainingMode.cloneConnections) do
+            conn:Disconnect()
+        end
+        TrainingMode.cloneConnections = {}
         print("Training mode enabled: AI vs Players")
         trainVsPlayersButton.Text = "Training vs Players..."
         trainVsPlayersButton.BackgroundColor3 = Color3.fromRGB(100, 150, 255)
@@ -307,6 +319,11 @@ local function CreateTrainingGUI(char, rp)
             TrainingMode.cloneCharacter:Destroy()
             TrainingMode.cloneCharacter = nil
         end
+        -- Disconnect clone AI connections
+        for _, conn in ipairs(TrainingMode.cloneConnections) do
+            conn:Disconnect()
+        end
+        TrainingMode.cloneConnections = {}
         print("Training mode stopped")
         trainVsCloneButton.Text = "Train vs AI Clone"
         trainVsCloneButton.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
@@ -1081,6 +1098,14 @@ local function initializeCombatSystem(character)
       SPECIAL_COMBO_MULTIPLIER_MID = 2.3, -- Special move multiplier in combos (early combo)
       DASH_AGGRESSIVE_MULTIPLIER = 1.8, -- Dash multiplier for aggressive tactics
       FEINT_AGGRESSIVE_MULTIPLIER = 2.0, -- Feint multiplier vs aggressive opponents
+      -- Clone AI constants
+      CLONE_ATTACK_DAMAGE_MIN = 5,
+      CLONE_ATTACK_DAMAGE_MAX = 10,
+      CLONE_SPECIAL_DAMAGE_MIN = 12,
+      CLONE_SPECIAL_DAMAGE_MAX = 20,
+      CLONE_ATTACK_PROBABILITY = 0.6, -- 60% chance to use attack when in range
+      CLONE_SPECIAL_PROBABILITY = 0.3, -- 30% chance to use special when in range
+      CLONE_ATTACK_WINDOW = 0.5, -- Time window to keep attack flag after tool is disabled
   }
 
   --// --- STATE MANAGEMENT ---
@@ -2796,12 +2821,17 @@ local function initializeCombatSystem(character)
   end
   
   local function CreateAIClone()
-      -- Destroy existing clone if any
+      -- Cleanup existing clone
       if TrainingMode.cloneCharacter then
           TrainingMode.cloneCharacter:Destroy()
       end
+      -- Disconnect clone AI connections
+      for _, conn in ipairs(TrainingMode.cloneConnections) do
+          conn:Disconnect()
+      end
+      TrainingMode.cloneConnections = {}
       
-      -- Create a simple dummy target for AI to fight against
+      -- Create clone character
       local clone = Instance.new("Model")
       clone.Name = "AI_Clone_Dummy"
       
@@ -2835,8 +2865,341 @@ local function initializeCombatSystem(character)
       clone.Parent = Workspace
       TrainingMode.cloneCharacter = clone
       
-      print("AI Clone created for training")
+      -- Initialize Clone AI (mimics player's AI)
+      InitializeCloneAI(clone, hrp, humanoid)
+      
+      print("AI Clone created with AI brain for training")
       return clone
+  end
+  
+  -- Initialize the clone's AI to mimic the player's AI behavior
+  local function InitializeCloneAI(clone, cloneRootPart, cloneHumanoid)
+      -- Create a separate AI brain for the clone
+      TrainingMode.cloneAI = {
+          State = {
+              currentTarget = nil,
+              targetHumanoid = nil,
+              targetTorso = nil,
+              combatState = "IDLE",
+              currentTactic = "Aggressive",
+              lastActionTimes = { ATTACK = 0, SPECIAL = 0, EVADE = 0, FEINT = 0, DASH = 0, BLOCK = 0 },
+              strafeDirection = 1,
+              lastStrafeChange = 0,
+              lastAction = "IDLE",
+              currentEnergy = CONST.MAX_ENERGY,
+              lastTargetHealth = 0,
+              myHealth = cloneHumanoid.Health,
+              isPerfectDodging = false,
+              dodgeStartTime = 0,
+              isFeinting = false,
+              feintStartTime = 0,
+              distanceAtFeintStart = 0,
+              isBlocking = false,
+              blockStartTime = 0,
+              punishWindowEndTime = 0,
+              comboStateEndTime = 0,
+              comboCount = 0,
+              consecutiveHits = 0,
+              lastComboTime = 0,
+              lastDamageDealtTime = 0,
+              isTargetAttacking = false,
+              lastPlayerAttackTime = 0,
+              cachedPredictedPos = nil,
+              lastPredictionTime = 0,
+              lastTargetVelocity = nil,
+          }
+      }
+      
+      local cloneState = TrainingMode.cloneAI.State
+      
+      -- Clone's target selection (targets the player)
+      local function CloneSetTarget()
+          if character and humanoid and humanoid.Health > 0 then
+              cloneState.currentTarget = character
+              cloneState.targetHumanoid = humanoid
+              cloneState.targetTorso = rootPart
+              cloneState.lastTargetHealth = humanoid.Health
+              cloneState.combatState = "ENGAGING"
+          else
+              cloneState.combatState = "IDLE"
+              cloneState.currentTarget = nil
+          end
+      end
+      
+      -- Clone's action execution (simulated - deals damage directly)
+      local function CloneExecuteAction(action, state)
+          local now = os.clock()
+          cloneState.lastAction = action
+          
+          if not cloneState.targetTorso then return end
+          
+          local targetPos = cloneState.targetTorso.Position
+          local cost = CONST.COSTS[action:upper()] or 0
+          cloneState.currentEnergy -= cost
+          
+          if action == "ATTACK" then
+              -- Simulate attack with damage
+              if state.inRange and humanoid and humanoid.Health > 0 then
+                  local damage = math.random(CONST.CLONE_ATTACK_DAMAGE_MIN, CONST.CLONE_ATTACK_DAMAGE_MAX)
+                  humanoid:TakeDamage(damage)
+                  cloneState.punishWindowEndTime = 0
+              end
+              cloneState.lastActionTimes.ATTACK = now
+          elseif action == "SPECIAL" then
+              -- Simulate special move with higher damage
+              if state.inRange and humanoid and humanoid.Health > 0 then
+                  local damage = math.random(CONST.CLONE_SPECIAL_DAMAGE_MIN, CONST.CLONE_SPECIAL_DAMAGE_MAX)
+                  humanoid:TakeDamage(damage)
+                  cloneState.punishWindowEndTime = 0
+              end
+              cloneState.lastActionTimes.SPECIAL = now
+          elseif action == "EVADE" then
+              -- Simulate dodge by moving perpendicular
+              local perpendicular = cloneRootPart.CFrame.RightVector * (math.random() > 0.5 and 1 or -1)
+              local evadePos = cloneRootPart.Position + (perpendicular.Unit * 15)
+              cloneRootPart.CFrame = CFrame.new(evadePos)
+              cloneState.lastActionTimes.EVADE = now
+              cloneState.isPerfectDodging = true
+              cloneState.dodgeStartTime = now
+          elseif action == "DASH" then
+              -- Simulate dash
+              local dashDir
+              local currentDist = (cloneRootPart.Position - targetPos).Magnitude
+              if cloneState.currentTactic == "Defensive" or state.myHealthPercent < 0.3 then
+                  dashDir = (cloneRootPart.Position - targetPos).Unit
+              elseif currentDist > CONST.ATTACK_RANGE * 1.5 then
+                  dashDir = (targetPos - cloneRootPart.Position).Unit
+              else
+                  dashDir = cloneRootPart.CFrame.RightVector * (math.random() > 0.5 and 1 or -1)
+              end
+              cloneRootPart.CFrame = CFrame.new(cloneRootPart.Position + dashDir * 10)
+              cloneState.lastActionTimes.DASH = now
+          elseif action == "FEINT" then
+              cloneState.lastActionTimes.FEINT = now
+              cloneState.isFeinting = true
+              cloneState.feintStartTime = now
+              cloneState.distanceAtFeintStart = (cloneRootPart.Position - targetPos).Magnitude
+          elseif action == "BLOCK" then
+              cloneState.lastActionTimes.BLOCK = now
+              cloneState.isBlocking = true
+              cloneState.blockStartTime = now
+          elseif action == "REPOSITION" then
+              -- Strafe and maintain distance
+              if now - cloneState.lastStrafeChange > 1.0 then
+                  cloneState.strafeDirection *= -1
+                  cloneState.lastStrafeChange = now
+              end
+              local currentDist = (cloneRootPart.Position - targetPos).Magnitude
+              local desiredRange = CONST.ATTACK_RANGE * 0.9
+              local moveDirection = targetPos - ((targetPos - cloneRootPart.Position).Unit * desiredRange) + 
+                                  (cloneRootPart.CFrame.RightVector * 10 * cloneState.strafeDirection)
+              cloneHumanoid:MoveTo(moveDirection)
+          end
+      end
+      
+      -- Simplified action selection for clone
+      local function ChooseCloneAction(state, tactic, now)
+          local possibleActions = {}
+          
+          -- Check cooldowns
+          if (now - cloneState.lastActionTimes.ATTACK > CONST.ATTACK_COOLDOWN) and state.inRange then
+              table.insert(possibleActions, "ATTACK")
+          end
+          if (now - cloneState.lastActionTimes.SPECIAL > CONST.SPECIAL_MOVE_COOLDOWN) and 
+             (state.energy >= CONST.COSTS.SPECIAL) and state.inRange then
+              table.insert(possibleActions, "SPECIAL")
+          end
+          if (now - cloneState.lastActionTimes.EVADE > CONST.DASH_COOLDOWN) and 
+             (state.energy >= CONST.COSTS.DASH) then
+              table.insert(possibleActions, "EVADE")
+          end
+          if (now - cloneState.lastActionTimes.DASH > CONST.DASH_COOLDOWN) and 
+             (state.energy >= CONST.COSTS.DASH) then
+              table.insert(possibleActions, "DASH")
+          end
+          if (now - cloneState.lastActionTimes.FEINT > CONST.FEINT_COOLDOWN) and 
+             (state.energy >= CONST.COSTS.FEINT) and state.inRange then
+              table.insert(possibleActions, "FEINT")
+          end
+          if (now - cloneState.lastActionTimes.BLOCK > CONST.BLOCK_COOLDOWN) and 
+             (state.energy >= CONST.COSTS.BLOCK) and not cloneState.isBlocking then
+              table.insert(possibleActions, "BLOCK")
+          end
+          table.insert(possibleActions, "REPOSITION")
+          
+          -- Simple tactical decision
+          if #possibleActions == 0 then return "REPOSITION" end
+          
+          -- Prefer attacks when in range and have energy (fixed probability logic)
+          if state.inRange and state.energy > 50 then
+              -- Check for ATTACK action availability
+              for _, action in ipairs(possibleActions) do
+                  if action == "ATTACK" then
+                      if math.random() < CONST.CLONE_ATTACK_PROBABILITY then
+                          return "ATTACK"
+                      end
+                      break -- Only check once
+                  end
+              end
+              -- Check for SPECIAL action availability
+              for _, action in ipairs(possibleActions) do
+                  if action == "SPECIAL" then
+                      if math.random() < CONST.CLONE_SPECIAL_PROBABILITY then
+                          return "SPECIAL"
+                      end
+                      break -- Only check once
+                  end
+              end
+          end
+          
+          -- Defensive when low health
+          if state.myHealthPercent < 0.3 then
+              for _, action in ipairs(possibleActions) do
+                  if action == "EVADE" and state.isTargetAttacking then
+                      return "EVADE"
+                  end
+                  if action == "BLOCK" and state.isTargetAttacking then
+                      return "BLOCK"
+                  end
+              end
+          end
+          
+          -- Close distance if too far
+          if state.distance > CONST.ATTACK_RANGE * 1.5 then
+              for _, action in ipairs(possibleActions) do
+                  if action == "DASH" then
+                      return "DASH"
+                  end
+              end
+          end
+          
+          -- Random action
+          return possibleActions[math.random(#possibleActions)]
+      end
+      
+      -- Clone's combat logic loop
+      local function CloneExecuteCombat(now)
+          if cloneState.combatState ~= "ENGAGING" or cloneState.isFeinting then return end
+          if not (cloneState.targetTorso and cloneState.targetTorso.Parent and cloneState.targetHumanoid) then return end
+          
+          -- Aim at target
+          local targetPos = cloneState.targetTorso.Position
+          cloneRootPart.CFrame = CFrame.lookAt(cloneRootPart.Position, Vector3.new(targetPos.X, cloneRootPart.Position.Y, targetPos.Z))
+          
+          -- Build state
+          local distance = (cloneRootPart.Position - cloneState.targetTorso.Position).Magnitude
+          local myHealthPercent = cloneHumanoid.Health / cloneHumanoid.MaxHealth
+          local targetHealthPercent = cloneState.targetHumanoid.Health / cloneState.targetHumanoid.MaxHealth
+          
+          local state = {
+              myHealthPercent = myHealthPercent,
+              targetHealthPercent = targetHealthPercent,
+              distance = distance,
+              energy = cloneState.currentEnergy,
+              inRange = distance <= CONST.ATTACK_RANGE,
+              isTargetAttacking = cloneState.isTargetAttacking,
+          }
+          
+          -- Choose tactic (simplified)
+          if myHealthPercent < 0.3 then
+              cloneState.currentTactic = "Defensive"
+          elseif targetHealthPercent < 0.2 then
+              cloneState.currentTactic = "Finisher"
+          else
+              cloneState.currentTactic = "Aggressive"
+          end
+          
+          -- Choose action (simplified decision making)
+          local bestAction = ChooseCloneAction(state, cloneState.currentTactic, now)
+          CloneExecuteAction(bestAction, state)
+      end
+      
+      -- Clone AI update loop
+      local function CloneUpdateAI(deltaTime)
+          local now = os.clock()
+          
+          -- Regenerate energy
+          cloneState.currentEnergy = math.min(CONST.MAX_ENERGY, cloneState.currentEnergy + CONST.ENERGY_REGEN_RATE * deltaTime)
+          
+          -- Update target
+          CloneSetTarget()
+          
+          -- Detect if player is attacking (improved detection)
+          local activeTool = character and character:FindFirstChildOfClass("Tool")
+          local wasAttacking = cloneState.isTargetAttacking
+          cloneState.isTargetAttacking = activeTool and activeTool.Enabled
+          -- If tool just became active, mark as attacking with timeout
+          if cloneState.isTargetAttacking and not wasAttacking then
+              cloneState.lastPlayerAttackTime = now
+          elseif not cloneState.isTargetAttacking and wasAttacking then
+              -- Keep attack flag for a brief moment after tool is disabled (attack window)
+              if now - (cloneState.lastPlayerAttackTime or 0) < CONST.CLONE_ATTACK_WINDOW then
+                  cloneState.isTargetAttacking = true
+              end
+          end
+          
+          -- Handle perfect dodge timeout
+          if cloneState.isPerfectDodging and now > cloneState.dodgeStartTime + CONST.PERFECT_DODGE_WINDOW then
+              cloneState.isPerfectDodging = false
+          end
+          
+          -- Handle feint
+          if cloneState.isFeinting and now > cloneState.feintStartTime + CONST.FEINT_DURATION then
+              cloneState.isFeinting = false
+          end
+          
+          -- Handle block release
+          if cloneState.isBlocking then
+              local blockTime = now - cloneState.blockStartTime
+              if blockTime > CONST.BLOCK_DURATION or not cloneState.isTargetAttacking then
+                  cloneState.isBlocking = false
+              end
+          end
+          
+          -- Track damage dealt
+          if cloneState.targetHumanoid then
+              local currentTargetHealth = cloneState.targetHumanoid.Health
+              local damageDealt = cloneState.lastTargetHealth - currentTargetHealth
+              if damageDealt > 0 then
+                  cloneState.lastDamageDealtTime = now
+                  -- Track combo
+                  if now < cloneState.comboStateEndTime then
+                      cloneState.comboCount += 1
+                      cloneState.consecutiveHits += 1
+                  else
+                      cloneState.comboCount = 1
+                      cloneState.consecutiveHits = 1
+                  end
+                  cloneState.comboStateEndTime = now + CONST.COMBO_WINDOW_DURATION
+              end
+              cloneState.lastTargetHealth = currentTargetHealth
+          end
+      end
+      
+      -- Connect clone AI to heartbeat
+      table.insert(TrainingMode.cloneConnections, RunService.Heartbeat:Connect(function(deltaTime)
+          local success, err = pcall(function()
+              local now = os.clock()
+              CloneUpdateAI(deltaTime)
+              CloneExecuteCombat(now)
+          end)
+          if not success then
+              warn("Clone AI encountered an error:", err)
+          end
+      end))
+      
+      -- Handle clone death
+      table.insert(TrainingMode.cloneConnections, cloneHumanoid.Died:Connect(function()
+          print("Clone AI has been defeated!")
+          -- Disconnect clone AI connections safely
+          local connectionsToDisconnect = TrainingMode.cloneConnections
+          TrainingMode.cloneConnections = {}
+          for _, conn in ipairs(connectionsToDisconnect) do
+              conn:Disconnect()
+          end
+      end))
+      
+      print("Clone AI initialized - ready to fight!")
   end
 
   local function EvaluateAndSetTarget()
