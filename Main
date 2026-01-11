@@ -1098,6 +1098,13 @@ local function initializeCombatSystem(character)
       SPECIAL_COMBO_MULTIPLIER_MID = 2.3, -- Special move multiplier in combos (early combo)
       DASH_AGGRESSIVE_MULTIPLIER = 1.8, -- Dash multiplier for aggressive tactics
       FEINT_AGGRESSIVE_MULTIPLIER = 2.0, -- Feint multiplier vs aggressive opponents
+      -- Clone AI constants
+      CLONE_ATTACK_DAMAGE_MIN = 5,
+      CLONE_ATTACK_DAMAGE_MAX = 10,
+      CLONE_SPECIAL_DAMAGE_MIN = 12,
+      CLONE_SPECIAL_DAMAGE_MAX = 20,
+      CLONE_ATTACK_PROBABILITY = 0.3, -- Probability to prefer attack when in range
+      CLONE_SPECIAL_PROBABILITY = 0.7, -- Probability to prefer special when in range
   }
 
   --// --- STATE MANAGEMENT ---
@@ -2895,6 +2902,7 @@ local function initializeCombatSystem(character)
               lastComboTime = 0,
               lastDamageDealtTime = 0,
               isTargetAttacking = false,
+              lastPlayerAttackTime = 0,
               cachedPredictedPos = nil,
               lastPredictionTime = 0,
               lastTargetVelocity = nil,
@@ -2931,7 +2939,7 @@ local function initializeCombatSystem(character)
           if action == "ATTACK" then
               -- Simulate attack with damage
               if state.inRange and humanoid and humanoid.Health > 0 then
-                  local damage = math.random(5, 10) -- Random damage like a normal attack
+                  local damage = math.random(CONST.CLONE_ATTACK_DAMAGE_MIN, CONST.CLONE_ATTACK_DAMAGE_MAX)
                   humanoid:TakeDamage(damage)
                   cloneState.punishWindowEndTime = 0
               end
@@ -2939,7 +2947,7 @@ local function initializeCombatSystem(character)
           elseif action == "SPECIAL" then
               -- Simulate special move with higher damage
               if state.inRange and humanoid and humanoid.Health > 0 then
-                  local damage = math.random(12, 20)
+                  local damage = math.random(CONST.CLONE_SPECIAL_DAMAGE_MIN, CONST.CLONE_SPECIAL_DAMAGE_MAX)
                   humanoid:TakeDamage(damage)
                   cloneState.punishWindowEndTime = 0
               end
@@ -3062,10 +3070,10 @@ local function initializeCombatSystem(character)
           -- Prefer attacks when in range and have energy
           if state.inRange and state.energy > 50 then
               for _, action in ipairs(possibleActions) do
-                  if action == "ATTACK" and math.random() > 0.3 then
+                  if action == "ATTACK" and math.random() > CONST.CLONE_ATTACK_PROBABILITY then
                       return "ATTACK"
                   end
-                  if action == "SPECIAL" and math.random() > 0.7 then
+                  if action == "SPECIAL" and math.random() > CONST.CLONE_SPECIAL_PROBABILITY then
                       return "SPECIAL"
                   end
               end
@@ -3106,9 +3114,19 @@ local function initializeCombatSystem(character)
           -- Update target
           CloneSetTarget()
           
-          -- Detect if player is attacking
+          -- Detect if player is attacking (improved detection)
           local activeTool = character and character:FindFirstChildOfClass("Tool")
+          local wasAttacking = cloneState.isTargetAttacking
           cloneState.isTargetAttacking = activeTool and activeTool.Enabled
+          -- If tool just became active, mark as attacking with timeout
+          if cloneState.isTargetAttacking and not wasAttacking then
+              cloneState.lastPlayerAttackTime = now
+          elseif not cloneState.isTargetAttacking and wasAttacking then
+              -- Keep attack flag for a brief moment after tool is disabled (attack window)
+              if now - (cloneState.lastPlayerAttackTime or 0) < 0.5 then
+                  cloneState.isTargetAttacking = true
+              end
+          end
           
           -- Handle perfect dodge timeout
           if cloneState.isPerfectDodging and now > cloneState.dodgeStartTime + CONST.PERFECT_DODGE_WINDOW then
