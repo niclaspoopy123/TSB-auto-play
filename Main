@@ -1103,8 +1103,8 @@ local function initializeCombatSystem(character)
       CLONE_ATTACK_DAMAGE_MAX = 10,
       CLONE_SPECIAL_DAMAGE_MIN = 12,
       CLONE_SPECIAL_DAMAGE_MAX = 20,
-      CLONE_ATTACK_PROBABILITY = 0.3, -- Probability to prefer attack when in range
-      CLONE_SPECIAL_PROBABILITY = 0.7, -- Probability to prefer special when in range
+      CLONE_ATTACK_PROBABILITY = 0.6, -- 60% chance to use attack when in range
+      CLONE_SPECIAL_PROBABILITY = 0.3, -- 30% chance to use special when in range
   }
 
   --// --- STATE MANAGEMENT ---
@@ -3031,12 +3031,22 @@ local function initializeCombatSystem(character)
           
           -- Prefer attacks when in range and have energy (fixed probability logic)
           if state.inRange and state.energy > 50 then
+              -- Check for ATTACK action availability
               for _, action in ipairs(possibleActions) do
-                  if action == "ATTACK" and math.random() < CONST.CLONE_ATTACK_PROBABILITY then
-                      return "ATTACK"
+                  if action == "ATTACK" then
+                      if math.random() < CONST.CLONE_ATTACK_PROBABILITY then
+                          return "ATTACK"
+                      end
+                      break -- Only check once
                   end
-                  if action == "SPECIAL" and math.random() < CONST.CLONE_SPECIAL_PROBABILITY then
-                      return "SPECIAL"
+              end
+              -- Check for SPECIAL action availability
+              for _, action in ipairs(possibleActions) do
+                  if action == "SPECIAL" then
+                      if math.random() < CONST.CLONE_SPECIAL_PROBABILITY then
+                          return "SPECIAL"
+                      end
+                      break -- Only check once
                   end
               end
           end
