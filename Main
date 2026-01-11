@@ -1019,6 +1019,7 @@ local function initializeCombatSystem(character)
   -- Centralized constants for easy tuning of the AI's behavior.
   local CONST = {
       DEBUG_MODE = false, -- Set to true for detailed logging
+      DEBUG_COMBOS = true, -- Set to true for combo logging
       AGGRO_RANGE = 200, ATTACK_RANGE = characterInfo.AttackRange or 30, KITE_RANGE = characterInfo.KiteRange or 40,
       TARGET_SCAN_INTERVAL = 0.3, -- Reduced from 0.5 for faster target acquisition
       MAX_ENERGY = 500, ENERGY_REGEN_RATE = 100,
@@ -1074,6 +1075,12 @@ local function initializeCombatSystem(character)
       MIN_BLOCK_TIME = 0.1, -- Minimum time before block validation
       MIN_SUCCESSFUL_BLOCK_TIME = 0.3, -- Minimum time to count as successful block
       REWARD_SUCCESSFUL_BLOCK = 20, -- Reward for successfully blocking an attack
+      -- Combo and tech multiplier constants
+      COMBO_MAX_MULTIPLIER = 3.5, -- Maximum combo damage multiplier
+      SPECIAL_COMBO_MULTIPLIER = 2.8, -- Special move multiplier in combos (high combo)
+      SPECIAL_COMBO_MULTIPLIER_MID = 2.3, -- Special move multiplier in combos (early combo)
+      DASH_AGGRESSIVE_MULTIPLIER = 1.8, -- Dash multiplier for aggressive tactics
+      FEINT_AGGRESSIVE_MULTIPLIER = 2.0, -- Feint multiplier vs aggressive opponents
   }
 
   --// --- STATE MANAGEMENT ---
@@ -2241,17 +2248,19 @@ local function initializeCombatSystem(character)
       end
 
       if isCapitalizeWindow() and state.inRange then
-          if AI.State.glitchComboWindowEndTime > now then 
-              print("Executing Glitch Combo!") 
-          elseif AI.State.punishWindowEndTime > now then
-              print("Executing Punish Window Combo!")
+          if CONST.DEBUG_MODE then
+              if AI.State.glitchComboWindowEndTime > now then 
+                  print("Executing Glitch Combo!") 
+              elseif AI.State.punishWindowEndTime > now then
+                  print("Executing Punish Window Combo!")
+              end
           end
           if #AI.AvailableMoves > 0 and now - AI.State.lastActionTimes.SPECIAL > CONST.SPECIAL_MOVE_COOLDOWN and state.energy >= CONST.COSTS.SPECIAL then 
-              print("Using SPECIAL in capitalize window")
+              if CONST.DEBUG_MODE then print("Using SPECIAL in capitalize window") end
               return "SPECIAL" 
           end
           if now - AI.State.lastActionTimes.ATTACK > CONST.ATTACK_COOLDOWN then 
-              print("Using ATTACK in capitalize window")
+              if CONST.DEBUG_MODE then print("Using ATTACK in capitalize window") end
               return "ATTACK" 
           end
       end
@@ -2398,7 +2407,7 @@ local function initializeCombatSystem(character)
               -- DASH action modifiers - aggressive repositioning and tech usage
               if action == "DASH" then
                   if tactic == "Aggressive" or tactic == "Finisher" then
-                      modifier *= 1.8 -- Strongly encourage dash for aggressive tactics
+                      modifier *= CONST.DASH_AGGRESSIVE_MULTIPLIER
                   end
                   if state.distance > CONST.ATTACK_RANGE * 1.2 then
                       modifier *= 1.5 -- Use dash to close distance
@@ -2412,7 +2421,7 @@ local function initializeCombatSystem(character)
               -- FEINT action modifiers - tech usage
               if action == "FEINT" then
                   if AI.OpponentModel.aggressionScore > 0.6 then
-                      modifier *= 2.0 -- Use feints against aggressive opponents
+                      modifier *= CONST.FEINT_AGGRESSIVE_MULTIPLIER
                   end
                   if state.distance < CONST.ATTACK_RANGE * 1.3 then
                       modifier *= 1.5 -- Feint when in close range
@@ -2439,15 +2448,15 @@ local function initializeCombatSystem(character)
                   local linearBonus = AI.State.comboCount * 0.25
                   local exponentialBonus = (AI.State.comboCount ^ 1.18) * 0.09
                   local comboBonus = 2.0 + linearBonus + exponentialBonus
-                  modifier *= math.min(comboBonus, 3.5) -- Higher cap for better combo continuation
+                  modifier *= math.min(comboBonus, CONST.COMBO_MAX_MULTIPLIER)
               end
               if action == "SPECIAL" and inCombo then
                   if AI.State.comboCount >= 2 then
                       -- Much stronger special usage in combos for maximum damage
-                      modifier *= 2.8
+                      modifier *= CONST.SPECIAL_COMBO_MULTIPLIER
                   elseif AI.State.comboCount >= 1 then
                       -- Use special moves in combos
-                      modifier *= 2.3
+                      modifier *= CONST.SPECIAL_COMBO_MULTIPLIER_MID
                   end
               end
               if action == "SPECIAL" and now < AI.State.punishWindowEndTime then
@@ -2847,11 +2856,13 @@ local function initializeCombatSystem(character)
                       AI.Score += 10
                       print(`Clone eliminated. New Score: {AI.Score}`)
                       AI.State.currentTarget = nil
-                      -- Respawn clone after brief delay
-                      task.wait(2)
-                      if TrainingMode.enabled and TrainingMode.trainingAgainstClone then
-                          CreateAIClone()
-                      end
+                      -- Respawn clone after brief delay (in separate thread)
+                      task.spawn(function()
+                          task.wait(2)
+                          if TrainingMode.enabled and TrainingMode.trainingAgainstClone then
+                              CreateAIClone()
+                          end
+                      end)
                   end)
               end
               AI.State.combatState = "ENGAGING"
@@ -3077,16 +3088,20 @@ local function initializeCombatSystem(character)
                   local exponentialBonus = (AI.State.comboCount ^ 1.20) * 0.05
                   local comboMultiplier = 1.0 + linearBonus + exponentialBonus
                   reward *= math.min(comboMultiplier, 3.0) -- Higher cap at 3.0x for better high-combo rewards
-                  print(`Combo x${AI.State.comboCount}! Damage: ${damageDealt}, Multiplier: ${string.format("%.2f", comboMultiplier)}x`)
+                  if CONST.DEBUG_COMBOS then
+                      print(`Combo x${AI.State.comboCount}! Damage: ${damageDealt}, Multiplier: ${string.format("%.2f", comboMultiplier)}x`)
+                  end
               else
                   -- Start new combo if window expired
-                  if AI.State.comboCount > 0 then
+                  if CONST.DEBUG_COMBOS and AI.State.comboCount > 0 then
                       print(`Combo ended at x${AI.State.comboCount}`)
                   end
                   AI.State.comboCount = 1 -- Start at 1 to reward combo initiation
                   AI.State.consecutiveHits = 1
                   AI.State.lastComboTime = now
-                  print(`New combo started! Damage: ${damageDealt}`)
+                  if CONST.DEBUG_COMBOS then
+                      print(`New combo started! Damage: ${damageDealt}`)
+                  end
               end
               
               -- Bonus for exploiting opportunity windows with better scaling
