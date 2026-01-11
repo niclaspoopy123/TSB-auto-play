@@ -189,6 +189,42 @@ local function CreateTrainingGUI(char, rp)
     stopTrainingButton.Font = Enum.Font.GothamBold
     stopTrainingButton.Parent = mainFrame
     
+    -- Make frame draggable
+    local dragging = false
+    local dragInput, mousePos, framePos
+    
+    mainFrame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            mousePos = input.Position
+            framePos = mainFrame.Position
+            
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+    
+    mainFrame.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement then
+            dragInput = input
+        end
+    end)
+    
+    game:GetService("UserInputService").InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - mousePos
+            mainFrame.Position = UDim2.new(
+                framePos.X.Scale,
+                framePos.X.Offset + delta.X,
+                framePos.Y.Scale,
+                framePos.Y.Offset + delta.Y
+            )
+        end
+    end)
+    
     -- Add rounded corners
     local uiCorner = Instance.new("UICorner")
     uiCorner.CornerRadius = UDim.new(0, 8)
@@ -1077,6 +1113,7 @@ local function initializeCombatSystem(character)
           comboCount = 0,
           lastComboTime = 0,
           consecutiveHits = 0,
+          lastDamageDealtTime = 0, -- Track when damage was last dealt for proper timing
           -- Adaptive learning rate
           currentLearningRate = CONST.LEARNING_RATE_ALPHA,
           recentPerformance = {},
@@ -2204,11 +2241,19 @@ local function initializeCombatSystem(character)
       end
 
       if isCapitalizeWindow() and state.inRange then
-          if CONST.DEBUG_MODE and AI.State.glitchComboWindowEndTime > now then 
+          if AI.State.glitchComboWindowEndTime > now then 
               print("Executing Glitch Combo!") 
+          elseif AI.State.punishWindowEndTime > now then
+              print("Executing Punish Window Combo!")
           end
-          if #AI.AvailableMoves > 0 and now - AI.State.lastActionTimes.SPECIAL > CONST.SPECIAL_MOVE_COOLDOWN and state.energy >= CONST.COSTS.SPECIAL then return "SPECIAL" end
-          if now - AI.State.lastActionTimes.ATTACK > CONST.ATTACK_COOLDOWN then return "ATTACK" end
+          if #AI.AvailableMoves > 0 and now - AI.State.lastActionTimes.SPECIAL > CONST.SPECIAL_MOVE_COOLDOWN and state.energy >= CONST.COSTS.SPECIAL then 
+              print("Using SPECIAL in capitalize window")
+              return "SPECIAL" 
+          end
+          if now - AI.State.lastActionTimes.ATTACK > CONST.ATTACK_COOLDOWN then 
+              print("Using ATTACK in capitalize window")
+              return "ATTACK" 
+          end
       end
 
       -- Cache possible actions check for ultra-fast performance
@@ -3007,6 +3052,9 @@ local function initializeCombatSystem(character)
       local currentTargetHealth = AI.State.targetHumanoid.Health
       local damageDealt = AI.State.lastTargetHealth - currentTargetHealth
       if damageDealt > 0 then
+          -- Track when damage was dealt
+          AI.State.lastDamageDealtTime = now
+          
           local action = AI.State.lastAction
           local reward
           
@@ -3029,17 +3077,16 @@ local function initializeCombatSystem(character)
                   local exponentialBonus = (AI.State.comboCount ^ 1.20) * 0.05
                   local comboMultiplier = 1.0 + linearBonus + exponentialBonus
                   reward *= math.min(comboMultiplier, 3.0) -- Higher cap at 3.0x for better high-combo rewards
-                  if CONST.DEBUG_MODE then
-                      print(`Combo x${AI.State.comboCount}! Reward multiplier: ${string.format("%.2f", comboMultiplier)}x`)
-                  end
+                  print(`Combo x${AI.State.comboCount}! Damage: ${damageDealt}, Multiplier: ${string.format("%.2f", comboMultiplier)}x`)
               else
                   -- Start new combo if window expired
-                  if CONST.DEBUG_MODE and AI.State.comboCount > 0 then
+                  if AI.State.comboCount > 0 then
                       print(`Combo ended at x${AI.State.comboCount}`)
                   end
                   AI.State.comboCount = 1 -- Start at 1 to reward combo initiation
                   AI.State.consecutiveHits = 1
                   AI.State.lastComboTime = now
+                  print(`New combo started! Damage: ${damageDealt}`)
               end
               
               -- Bonus for exploiting opportunity windows with better scaling
