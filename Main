@@ -1105,6 +1105,7 @@ local function initializeCombatSystem(character)
       CLONE_SPECIAL_DAMAGE_MAX = 20,
       CLONE_ATTACK_PROBABILITY = 0.6, -- 60% chance to use attack when in range
       CLONE_SPECIAL_PROBABILITY = 0.3, -- 30% chance to use special when in range
+      CLONE_ATTACK_WINDOW = 0.5, -- Time window to keep attack flag after tool is disabled
   }
 
   --// --- STATE MANAGEMENT ---
@@ -3132,7 +3133,7 @@ local function initializeCombatSystem(character)
               cloneState.lastPlayerAttackTime = now
           elseif not cloneState.isTargetAttacking and wasAttacking then
               -- Keep attack flag for a brief moment after tool is disabled (attack window)
-              if now - (cloneState.lastPlayerAttackTime or 0) < 0.5 then
+              if now - (cloneState.lastPlayerAttackTime or 0) < CONST.CLONE_ATTACK_WINDOW then
                   cloneState.isTargetAttacking = true
               end
           end
@@ -3190,11 +3191,12 @@ local function initializeCombatSystem(character)
       -- Handle clone death
       table.insert(TrainingMode.cloneConnections, cloneHumanoid.Died:Connect(function()
           print("Clone AI has been defeated!")
-          -- Disconnect clone AI
-          for _, conn in ipairs(TrainingMode.cloneConnections) do
+          -- Disconnect clone AI connections safely
+          local connectionsToDisconnect = TrainingMode.cloneConnections
+          TrainingMode.cloneConnections = {}
+          for _, conn in ipairs(connectionsToDisconnect) do
               conn:Disconnect()
           end
-          TrainingMode.cloneConnections = {}
       end))
       
       print("Clone AI initialized - ready to fight!")
