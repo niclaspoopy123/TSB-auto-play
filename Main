@@ -2996,6 +2996,76 @@ local function initializeCombatSystem(character)
           end
       end
       
+      -- Simplified action selection for clone
+      local function ChooseCloneAction(state, tactic, now)
+          local possibleActions = {}
+          
+          -- Check cooldowns
+          if (now - cloneState.lastActionTimes.ATTACK > CONST.ATTACK_COOLDOWN) and state.inRange then
+              table.insert(possibleActions, "ATTACK")
+          end
+          if (now - cloneState.lastActionTimes.SPECIAL > CONST.SPECIAL_MOVE_COOLDOWN) and 
+             (state.energy >= CONST.COSTS.SPECIAL) and state.inRange then
+              table.insert(possibleActions, "SPECIAL")
+          end
+          if (now - cloneState.lastActionTimes.EVADE > CONST.DASH_COOLDOWN) and 
+             (state.energy >= CONST.COSTS.DASH) then
+              table.insert(possibleActions, "EVADE")
+          end
+          if (now - cloneState.lastActionTimes.DASH > CONST.DASH_COOLDOWN) and 
+             (state.energy >= CONST.COSTS.DASH) then
+              table.insert(possibleActions, "DASH")
+          end
+          if (now - cloneState.lastActionTimes.FEINT > CONST.FEINT_COOLDOWN) and 
+             (state.energy >= CONST.COSTS.FEINT) and state.inRange then
+              table.insert(possibleActions, "FEINT")
+          end
+          if (now - cloneState.lastActionTimes.BLOCK > CONST.BLOCK_COOLDOWN) and 
+             (state.energy >= CONST.COSTS.BLOCK) and not cloneState.isBlocking then
+              table.insert(possibleActions, "BLOCK")
+          end
+          table.insert(possibleActions, "REPOSITION")
+          
+          -- Simple tactical decision
+          if #possibleActions == 0 then return "REPOSITION" end
+          
+          -- Prefer attacks when in range and have energy (fixed probability logic)
+          if state.inRange and state.energy > 50 then
+              for _, action in ipairs(possibleActions) do
+                  if action == "ATTACK" and math.random() < CONST.CLONE_ATTACK_PROBABILITY then
+                      return "ATTACK"
+                  end
+                  if action == "SPECIAL" and math.random() < CONST.CLONE_SPECIAL_PROBABILITY then
+                      return "SPECIAL"
+                  end
+              end
+          end
+          
+          -- Defensive when low health
+          if state.myHealthPercent < 0.3 then
+              for _, action in ipairs(possibleActions) do
+                  if action == "EVADE" and state.isTargetAttacking then
+                      return "EVADE"
+                  end
+                  if action == "BLOCK" and state.isTargetAttacking then
+                      return "BLOCK"
+                  end
+              end
+          end
+          
+          -- Close distance if too far
+          if state.distance > CONST.ATTACK_RANGE * 1.5 then
+              for _, action in ipairs(possibleActions) do
+                  if action == "DASH" then
+                      return "DASH"
+                  end
+              end
+          end
+          
+          -- Random action
+          return possibleActions[math.random(#possibleActions)]
+      end
+      
       -- Clone's combat logic loop
       local function CloneExecuteCombat(now)
           if cloneState.combatState ~= "ENGAGING" or cloneState.isFeinting then return end
@@ -3031,77 +3101,6 @@ local function initializeCombatSystem(character)
           -- Choose action (simplified decision making)
           local bestAction = ChooseCloneAction(state, cloneState.currentTactic, now)
           CloneExecuteAction(bestAction, state)
-      end
-      
-      -- Simplified action selection for clone
-      local function ChooseCloneAction(state, tactic, now)
-          local possibleActions = {}
-          
-          -- Check cooldowns
-          local inCombo = now < cloneState.comboStateEndTime
-          if (now - cloneState.lastActionTimes.ATTACK > CONST.ATTACK_COOLDOWN) and state.inRange then
-              table.insert(possibleActions, "ATTACK")
-          end
-          if (now - cloneState.lastActionTimes.SPECIAL > CONST.SPECIAL_MOVE_COOLDOWN) and 
-             (state.energy >= CONST.COSTS.SPECIAL) and state.inRange then
-              table.insert(possibleActions, "SPECIAL")
-          end
-          if (now - cloneState.lastActionTimes.EVADE > CONST.DASH_COOLDOWN) and 
-             (state.energy >= CONST.COSTS.DASH) then
-              table.insert(possibleActions, "EVADE")
-          end
-          if (now - cloneState.lastActionTimes.DASH > CONST.DASH_COOLDOWN) and 
-             (state.energy >= CONST.COSTS.DASH) then
-              table.insert(possibleActions, "DASH")
-          end
-          if (now - cloneState.lastActionTimes.FEINT > CONST.FEINT_COOLDOWN) and 
-             (state.energy >= CONST.COSTS.FEINT) and state.inRange then
-              table.insert(possibleActions, "FEINT")
-          end
-          if (now - cloneState.lastActionTimes.BLOCK > CONST.BLOCK_COOLDOWN) and 
-             (state.energy >= CONST.COSTS.BLOCK) and not cloneState.isBlocking then
-              table.insert(possibleActions, "BLOCK")
-          end
-          table.insert(possibleActions, "REPOSITION")
-          
-          -- Simple tactical decision
-          if #possibleActions == 0 then return "REPOSITION" end
-          
-          -- Prefer attacks when in range and have energy
-          if state.inRange and state.energy > 50 then
-              for _, action in ipairs(possibleActions) do
-                  if action == "ATTACK" and math.random() > CONST.CLONE_ATTACK_PROBABILITY then
-                      return "ATTACK"
-                  end
-                  if action == "SPECIAL" and math.random() > CONST.CLONE_SPECIAL_PROBABILITY then
-                      return "SPECIAL"
-                  end
-              end
-          end
-          
-          -- Defensive when low health
-          if state.myHealthPercent < 0.3 then
-              for _, action in ipairs(possibleActions) do
-                  if action == "EVADE" and state.isTargetAttacking then
-                      return "EVADE"
-                  end
-                  if action == "BLOCK" and state.isTargetAttacking then
-                      return "BLOCK"
-                  end
-              end
-          end
-          
-          -- Close distance if too far
-          if state.distance > CONST.ATTACK_RANGE * 1.5 then
-              for _, action in ipairs(possibleActions) do
-                  if action == "DASH" then
-                      return "DASH"
-                  end
-              end
-          end
-          
-          -- Random action
-          return possibleActions[math.random(#possibleActions)]
       end
       
       -- Clone AI update loop
