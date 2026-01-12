@@ -285,14 +285,28 @@ local function CreateTrainingGUI(char, rp)
         return clone
     end
     
-    -- Button click handlers
+    -- Button click handlers with improved feedback
     trainVsCloneButton.MouseButton1Click:Connect(function()
         TrainingMode.enabled = true
         TrainingMode.trainingAgainstClone = true
-        createCloneLocal()
-        print("Training mode enabled: AI vs AI Clone")
-        trainVsCloneButton.Text = "Training vs Clone..."
-        trainVsCloneButton.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
+        trainVsCloneButton.Text = "Creating Clone..."
+        trainVsCloneButton.BackgroundColor3 = Color3.fromRGB(150, 150, 50)
+        
+        -- Create clone asynchronously to prevent GUI freeze
+        task.spawn(function()
+            local success, err = pcall(createCloneLocal)
+            if success then
+                print("Training mode enabled: AI vs AI Clone")
+                trainVsCloneButton.Text = "✓ Training vs Clone"
+                trainVsCloneButton.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
+            else
+                warn("Failed to create clone:", err)
+                trainVsCloneButton.Text = "Clone Failed - Retry"
+                trainVsCloneButton.BackgroundColor3 = Color3.fromRGB(200, 100, 50)
+                TrainingMode.enabled = false
+                TrainingMode.trainingAgainstClone = false
+            end
+        end)
     end)
     
     trainVsPlayersButton.MouseButton1Click:Connect(function()
@@ -304,11 +318,11 @@ local function CreateTrainingGUI(char, rp)
         end
         -- Disconnect clone AI connections
         for _, conn in ipairs(TrainingMode.cloneConnections) do
-            conn:Disconnect()
+            pcall(function() conn:Disconnect() end)
         end
         TrainingMode.cloneConnections = {}
         print("Training mode enabled: AI vs Players")
-        trainVsPlayersButton.Text = "Training vs Players..."
+        trainVsPlayersButton.Text = "✓ Training vs Players"
         trainVsPlayersButton.BackgroundColor3 = Color3.fromRGB(100, 150, 255)
     end)
     
@@ -316,12 +330,12 @@ local function CreateTrainingGUI(char, rp)
         TrainingMode.enabled = false
         TrainingMode.trainingAgainstClone = false
         if TrainingMode.cloneCharacter then
-            TrainingMode.cloneCharacter:Destroy()
+            pcall(function() TrainingMode.cloneCharacter:Destroy() end)
             TrainingMode.cloneCharacter = nil
         end
-        -- Disconnect clone AI connections
+        -- Disconnect clone AI connections safely
         for _, conn in ipairs(TrainingMode.cloneConnections) do
-            conn:Disconnect()
+            pcall(function() conn:Disconnect() end)
         end
         TrainingMode.cloneConnections = {}
         print("Training mode stopped")
@@ -1132,6 +1146,7 @@ local function initializeCombatSystem(character)
           cachedPredictedPos = nil, -- Cache predicted position
           lastPredictionTime = 0,
           lastTargetVelocity = nil, -- For acceleration prediction
+          lastTargetPosition = nil, -- Track last position for change detection
           -- Advanced exploration state
           explorationStrategy = "epsilon-greedy", -- Can be: epsilon-greedy, ucb, boltzmann
           boltzmannTemperature = CONST.BOLTZMANN_TEMPERATURE,
@@ -1572,6 +1587,12 @@ local function initializeCombatSystem(character)
   -- Store experience in replay buffer with proportional prioritization
   function AI.Learning.StoreExperience(state, action, reward, nextState, tactic)
       local buffer = AI.ExperienceBuffer
+      
+      -- Skip storing if state is invalid or nil
+      if not state or not action or not nextState then
+          return
+      end
+      
       local experience = {
           state = state,
           action = action,
@@ -1584,7 +1605,7 @@ local function initializeCombatSystem(character)
       -- Calculate initial priority (use max priority for new experiences)
       local maxPriority = 1.0
       for _, p in ipairs(buffer.priorities) do
-          if p > maxPriority then
+          if p and p > maxPriority then
               maxPriority = p
           end
       end
@@ -1596,6 +1617,12 @@ local function initializeCombatSystem(character)
           table.insert(buffer.experiences, experience)
           table.insert(buffer.priorities, priority)
       else
+          -- Clear old experience data to help garbage collection
+          local oldExp = buffer.experiences[buffer.nextIndex]
+          if oldExp then
+              oldExp.state = nil
+              oldExp.nextState = nil
+          end
           buffer.experiences[buffer.nextIndex] = experience
           buffer.priorities[buffer.nextIndex] = priority
       end
@@ -2813,8 +2840,9 @@ local function initializeCombatSystem(character)
       local healthScore = (1 - healthRatio) * 2.0 -- Increased weight for low-health targets
       local distanceScore = (1 - (distance / CONST.AGGRO_RANGE)) * 1.5 -- Closer is better
       
-      -- Improved velocity penalty with gradual scaling
-      local velocityMag = root.AssemblyLinearVelocity.Magnitude
+      -- Improved velocity penalty with gradual scaling (with nil safety)
+      local velocity = root.AssemblyLinearVelocity
+      local velocityMag = velocity and velocity.Magnitude or 0
       local velocityScore = velocityMag > 25 and -(velocityMag / 50) or 0.2 -- Bonus for stationary targets
 
       return healthScore + distanceScore + velocityScore
@@ -3176,26 +3204,40 @@ local function initializeCombatSystem(character)
           end
       end
       
-      -- Connect clone AI to heartbeat
+      -- Connect clone AI to heartbeat with improved error handling
       table.insert(TrainingMode.cloneConnections, RunService.Heartbeat:Connect(function(deltaTime)
           local success, err = pcall(function()
+              -- Validate clone still exists
+              if not (clone and clone.Parent and cloneHumanoid and cloneHumanoid.Health > 0) then
+                  return
+              end
               local now = os.clock()
-              CloneUpdateAI(deltaTime)
+              -- Guard against invalid deltaTime
+              if deltaTime and deltaTime > 0 and deltaTime < 1 then
+                  CloneUpdateAI(deltaTime)
+              end
               CloneExecuteCombat(now)
           end)
           if not success then
               warn("Clone AI encountered an error:", err)
+              -- Reset clone state on error
+              if cloneState then
+                  cloneState.combatState = "IDLE"
+                  cloneState.isFeinting = false
+                  cloneState.isPerfectDodging = false
+                  cloneState.isBlocking = false
+              end
           end
       end))
       
-      -- Handle clone death
+      -- Handle clone death with safer cleanup
       table.insert(TrainingMode.cloneConnections, cloneHumanoid.Died:Connect(function()
           print("Clone AI has been defeated!")
           -- Disconnect clone AI connections safely
           local connectionsToDisconnect = TrainingMode.cloneConnections
           TrainingMode.cloneConnections = {}
           for _, conn in ipairs(connectionsToDisconnect) do
-              conn:Disconnect()
+              pcall(function() conn:Disconnect() end)
           end
       end))
       
@@ -3290,9 +3332,9 @@ local function initializeCombatSystem(character)
           print(`GLITCH DETECTED: {glitchType}`)
       end
 
-      -- 1. Fast velocity spike detection (optimized)
+      -- 1. Fast velocity spike detection (optimized with nil safety)
       local currentVelocity = rootPart.AssemblyLinearVelocity
-      local currentVelocityMag = currentVelocity.Magnitude
+      local currentVelocityMag = currentVelocity and currentVelocity.Magnitude or 0
       if currentVelocityMag > CONST.GLITCH_VELOCITY_THRESHOLD and AI.GlitchScanner.lastVelocityMagnitude < CONST.GLITCH_VELOCITY_THRESHOLD then
           triggerGlitch("Velocity Spike")
           AI.GlitchScanner.lastVelocityMagnitude = currentVelocityMag
@@ -3338,7 +3380,8 @@ local function initializeCombatSystem(character)
               AI.State.lastOpponentAction = "ATTACK"
               AI.State.opponentActionTime = now
           elseif AI.State.targetTorso then
-              local targetVelocity = AI.State.targetTorso.AssemblyLinearVelocity.Magnitude
+              local velocity = AI.State.targetTorso.AssemblyLinearVelocity
+              local targetVelocity = velocity and velocity.Magnitude or 0
               if targetVelocity > 50 and now - AI.State.opponentActionTime > 0.5 then
                   AI.Learning.UpdateOpponentModel("EVADE")
                   AI.State.lastOpponentAction = "EVADE"
@@ -3532,13 +3575,14 @@ local function initializeCombatSystem(character)
           AI.FeatureWeights.tacticSuccess = math.max(0.4, AI.FeatureWeights.tacticSuccess * 0.995)
           AI.FeatureWeights.comboDensity = math.max(0.5, AI.FeatureWeights.comboDensity * 0.997)
           
-          -- Reset combo if too much time has passed without damage
+          -- Reset combo if too much time has passed without damage (improved timing)
           if AI.State.comboCount > 0 and now - AI.State.lastComboTime > CONST.COMBO_WINDOW_DURATION then
-              if CONST.DEBUG_MODE then
-                  print(`Combo broken! Was at x${AI.State.comboCount}`)
+              if CONST.DEBUG_COMBOS then
+                  print(`Combo timeout! Lost x${AI.State.comboCount} combo (${string.format("%.2f", now - AI.State.lastComboTime)}s since last hit)`)
               end
               AI.State.comboCount = 0
               AI.State.consecutiveHits = 0
+              AI.State.comboStateEndTime = 0
           end
       end
       
@@ -3550,7 +3594,12 @@ local function initializeCombatSystem(character)
       if not (AI.State.targetTorso and AI.State.targetTorso.Parent and AI.State.targetHumanoid) then return end
 
       -- Ultra-optimized prediction with aggressive caching and better velocity prediction
-      local shouldRecalcPrediction = not AI.State.cachedPredictedPos or (now - AI.State.lastPredictionTime) > 0.055
+      -- Only recalculate if: no cache exists, enough time has passed, OR target moved significantly
+      local targetMoved = AI.State.lastTargetPosition and 
+          (AI.State.targetTorso.Position - AI.State.lastTargetPosition).Magnitude > 3
+      local shouldRecalcPrediction = not AI.State.cachedPredictedPos or 
+          (now - AI.State.lastPredictionTime) > 0.055 or 
+          targetMoved
       if shouldRecalcPrediction then
           local ping = player:GetNetworkPing()
           local velocity = AI.State.targetTorso.AssemblyLinearVelocity
@@ -3601,6 +3650,7 @@ local function initializeCombatSystem(character)
           end
           
           AI.State.lastTargetVelocity = velocity
+          AI.State.lastTargetPosition = AI.State.targetTorso.Position
           AI.State.lastPredictionTime = now
       end
       
@@ -3729,12 +3779,22 @@ local function initializeCombatSystem(character)
   table.insert(connections, RunService.Heartbeat:Connect(function(deltaTime)
       local success, err = pcall(function()
           local now = os.clock()
-          UpdateAIState(deltaTime)
+          -- Guard against invalid deltaTime
+          if deltaTime and deltaTime > 0 and deltaTime < 1 then
+              UpdateAIState(deltaTime)
+          end
           UpdateLearningAndRewards(now)
           ExecuteCombatLogic(now)
       end)
       if not success then
           warn("Project Apex encountered an error in its main loop:", err)
+          -- Attempt to recover by resetting volatile state
+          if humanoid and humanoid.Health > 0 then
+              AI.State.combatState = "IDLE"
+              AI.State.isFeinting = false
+              AI.State.isPerfectDodging = false
+              AI.State.isBlocking = false
+          end
       end
   end))
   
