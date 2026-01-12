@@ -1106,6 +1106,9 @@ local function initializeCombatSystem(character)
       MIN_BLOCK_TIME = 0.1, -- Minimum time before block validation
       MIN_SUCCESSFUL_BLOCK_TIME = 0.3, -- Minimum time to count as successful block
       REWARD_SUCCESSFUL_BLOCK = 20, -- Reward for successfully blocking an attack
+      -- State update validation
+      MAX_DELTA_TIME = 1.0, -- Maximum valid deltaTime to prevent invalid updates
+      MIN_DELTA_TIME = 0.0, -- Minimum valid deltaTime
       -- Combo and tech multiplier constants
       COMBO_MAX_MULTIPLIER = 3.5, -- Maximum combo damage multiplier
       SPECIAL_COMBO_MULTIPLIER = 2.8, -- Special move multiplier in combos (high combo)
@@ -1169,6 +1172,13 @@ local function initializeCombatSystem(character)
   end
   AI.ResetState(CONST.MAX_ENERGY)
   AI.GlitchScanner.lastHumanoidState = humanoid:GetState()
+
+  --// --- HELPER FUNCTIONS ---
+  
+  -- Validates deltaTime to prevent invalid state updates
+  local function isValidDeltaTime(deltaTime)
+      return deltaTime and deltaTime > CONST.MIN_DELTA_TIME and deltaTime < CONST.MAX_DELTA_TIME
+  end
 
   -- Initialize Deep Neural Networks
   InitializeDeepNetworks()
@@ -3213,7 +3223,7 @@ local function initializeCombatSystem(character)
               end
               local now = os.clock()
               -- Guard against invalid deltaTime
-              if deltaTime and deltaTime > 0 and deltaTime < 1 then
+              if isValidDeltaTime(deltaTime) then
                   CloneUpdateAI(deltaTime)
               end
               CloneExecuteCombat(now)
@@ -3595,7 +3605,7 @@ local function initializeCombatSystem(character)
 
       -- Ultra-optimized prediction with aggressive caching and better velocity prediction
       -- Only recalculate if: no cache exists, enough time has passed, OR target moved significantly
-      local targetMoved = AI.State.lastTargetPosition and 
+      local targetMoved = AI.State.lastTargetPosition and AI.State.targetTorso and
           (AI.State.targetTorso.Position - AI.State.lastTargetPosition).Magnitude > 3
       local shouldRecalcPrediction = not AI.State.cachedPredictedPos or 
           (now - AI.State.lastPredictionTime) > 0.055 or 
@@ -3780,7 +3790,7 @@ local function initializeCombatSystem(character)
       local success, err = pcall(function()
           local now = os.clock()
           -- Guard against invalid deltaTime
-          if deltaTime and deltaTime > 0 and deltaTime < 1 then
+          if isValidDeltaTime(deltaTime) then
               UpdateAIState(deltaTime)
           end
           UpdateLearningAndRewards(now)
