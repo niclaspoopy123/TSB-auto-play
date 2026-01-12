@@ -1108,7 +1108,7 @@ local function initializeCombatSystem(character)
       REWARD_SUCCESSFUL_BLOCK = 20, -- Reward for successfully blocking an attack
       -- State update validation
       MAX_DELTA_TIME = 1.0, -- Maximum valid deltaTime to prevent invalid updates
-      MIN_DELTA_TIME = 0.0, -- Minimum valid deltaTime
+      MIN_DELTA_TIME = 0.001, -- Minimum valid deltaTime to prevent division by zero
       -- Combo and tech multiplier constants
       COMBO_MAX_MULTIPLIER = 3.5, -- Maximum combo damage multiplier
       SPECIAL_COMBO_MULTIPLIER = 2.8, -- Special move multiplier in combos (high combo)
@@ -1615,12 +1615,13 @@ local function initializeCombatSystem(character)
       -- Calculate initial priority (use max priority for new experiences)
       local maxPriority = 1.0
       for _, p in ipairs(buffer.priorities) do
+          -- Defensive nil check (priorities should never be nil, but guard against edge cases)
           if p and p > maxPriority then
               maxPriority = p
           end
       end
       
-      -- New experiences get max priority
+      -- New experiences get max priority (guaranteed non-nil)
       local priority = (maxPriority + buffer.epsilon) ^ buffer.alpha
       
       if #buffer.experiences < buffer.maxSize then
