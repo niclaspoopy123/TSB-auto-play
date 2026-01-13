@@ -723,7 +723,9 @@ local function UpdateNetworkWeights(network, inputs, learningRate, clipNorm)
                     
                     local weightGrad = grad * inputValue
                     
-                    -- Safety check for Adam parameters
+                    -- Safety check for Adam parameters - ensure arrays exist first
+                    if not vel.m_weights[i] then vel.m_weights[i] = {} end
+                    if not vel.v_weights[i] then vel.v_weights[i] = {} end
                     if not vel.m_weights[i][j] then vel.m_weights[i][j] = 0 end
                     if not vel.v_weights[i][j] then vel.v_weights[i][j] = 0 end
                     
@@ -1634,13 +1636,17 @@ local function initializeCombatSystem(character)
   --// --- ML-BASED DASH SELECTION ---
   
   -- Use neural network to predict best dash direction based on current state
-  function AI.DeepLearning.PredictBestDashDirection(state, targetPos, currentPos)
+  function AI.DeepLearning.PredictBestDashDirection(state, targetPos, currentPart)
       -- Encode dash-specific features
       local encodedState = AI.DeepLearning.EncodeState(state)
       
+      -- Extract position from Part if needed
+      local currentPos = (type(currentPart) == "userdata" and currentPart.Position) or currentPart
+      local currentCFrame = (type(currentPart) == "userdata" and currentPart.CFrame) or CFrame.new(currentPos)
+      
       -- Add directional features
       local toTarget = (targetPos - currentPos).Unit
-      local facingDir = currentPos.LookVector or Vector3.new(0, 0, 1)
+      local facingDir = currentCFrame.LookVector
       local relativeAngle = math.acos(math.clamp(toTarget:Dot(facingDir), -1, 1))
       
       -- Extend state with dash-specific features
