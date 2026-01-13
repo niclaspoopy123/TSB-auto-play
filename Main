@@ -1640,9 +1640,23 @@ local function initializeCombatSystem(character)
       -- Encode dash-specific features
       local encodedState = AI.DeepLearning.EncodeState(state)
       
-      -- Extract position from Part if needed
-      local currentPos = (type(currentPart) == "userdata" and currentPart.Position) or currentPart
-      local currentCFrame = (type(currentPart) == "userdata" and currentPart.CFrame) or CFrame.new(currentPos)
+      -- Extract position and CFrame from Part with proper Roblox type checking
+      local currentPos, currentCFrame
+      if typeof(currentPart) == "Instance" and currentPart:IsA("BasePart") then
+          -- currentPart is a Roblox Part object
+          currentPos = currentPart.Position
+          currentCFrame = currentPart.CFrame
+      elseif typeof(currentPart) == "Vector3" then
+          -- currentPart is already a Vector3
+          currentPos = currentPart
+          -- Use default orientation pointing forward
+          currentCFrame = CFrame.new(currentPos)
+      else
+          -- Fallback for unexpected types
+          warn("PredictBestDashDirection: Invalid currentPart type " .. typeof(currentPart))
+          currentPos = Vector3.new(0, 0, 0)
+          currentCFrame = CFrame.new(currentPos)
+      end
       
       -- Add directional features
       local toTarget = (targetPos - currentPos).Unit
