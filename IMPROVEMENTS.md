@@ -3,7 +3,45 @@
 ## Overview
 This document summarizes the comprehensive improvements made to the TSB Auto-Play AI combat bot script to make it better.
 
-## Changes Made
+## Latest Changes (Error Fixes & ML Enhancements)
+
+### 1. **Fixed Critical Runtime Errors** ✅
+- **Fixed Line 1195 Error**: Added type checking in `EncodeState()` to handle invalid state parameters
+  - Error: "attempt to index number with 'myHealthPercent'"
+  - Solution: Added `type(state) ~= "table"` check with safe default values
+  - Impact: Prevents crashes when state is corrupted or nil
+
+- **Fixed Line 697 Error**: Added comprehensive nil checks in Adam optimizer weight updates
+  - Error: "attempt to perform arithmetic (mul) on number and nil"
+  - Solution: Added nil checks for gradients, input values, and Adam parameters (m_biases, v_biases, m_weights, v_weights)
+  - Impact: Prevents crashes during neural network training
+
+### 2. **ML-Based Dash Direction Selection** 🤖
+- Implemented `AI.DeepLearning.PredictBestDashDirection()` function
+- Uses neural network Q-values to intelligently choose dash direction (W/A/S/D)
+- Context-aware scoring based on:
+  - Current tactic (Aggressive/Defensive/Finisher)
+  - Health percentage and distance to target
+  - Combo count and opponent aggression
+  - Previous dash patterns (anti-predictability)
+- Automatically switches from rule-based to ML-based after 100 trials
+- Debug logging for dash decision transparency
+
+### 3. **Combat Trick Discovery System** 🔥
+- Implemented `AI.DeepLearning.DiscoverCombatTricks()` function
+- Analyzes successful action sequences from experience replay
+- Pattern recognition for effective 3-action combos
+- Context-specific trick learning (state → best action mapping)
+- Automatic reinforcement learning boost for discovered patterns
+- Runs every 100 trials to continuously adapt
+- Console notifications when new tricks are discovered
+
+### 4. **Enhanced State Management** ✅
+- Added `lastDashDirection` and `lastDashScore` tracking
+- Added `discoveredTricks` dictionary for pattern storage
+- Improved state initialization in `ResetState()`
+
+## Previous Changes Made
 
 ### 1. **Enhanced Nil Safety** ✅
 - Added comprehensive nil checks for velocity calculations throughout the codebase
