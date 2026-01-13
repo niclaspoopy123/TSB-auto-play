@@ -12,7 +12,7 @@ This document summarizes the comprehensive improvements made to the TSB Auto-Pla
   - Impact: Prevents crashes when nested arrays in Adam optimizer are not initialized
 
 - **Fixed Line 1642 Error**: Fixed Vector3 arithmetic with Part object
-  - Error: "attempt to perform arithmetic (sub) on Vector3" - trying to subtract Part from Vector3
+  - Error: "attempt to perform arithmetic (sub) on Vector3" - trying to use Part object in Vector3 arithmetic
   - Solution: Extract `.Position` from Part parameter before Vector3 arithmetic
   - Changed `currentPos.LookVector` to `currentCFrame.LookVector` (correct API usage)
   - Impact: Prevents crashes in ML-based dash direction prediction
