@@ -6,6 +6,17 @@ This document summarizes the comprehensive improvements made to the TSB Auto-Pla
 ## Latest Changes (Error Fixes & ML Enhancements)
 
 ### 1. **Fixed Critical Runtime Errors** ✅
+- **Fixed Line 727 Error**: Fixed nil array indexing in Adam optimizer weight updates
+  - Error: "attempt to index nil with number" - `vel.m_weights[i][j]` accessed before array initialization
+  - Solution: Added checks to ensure arrays exist: `if not vel.m_weights[i] then vel.m_weights[i] = {} end`
+  - Impact: Prevents crashes when nested arrays in Adam optimizer are not initialized
+
+- **Fixed Line 1642 Error**: Fixed Vector3 arithmetic with Part object
+  - Error: "attempt to perform arithmetic (sub) on Vector3" - trying to use Part object in Vector3 arithmetic
+  - Solution: Extract `.Position` from Part parameter before Vector3 arithmetic
+  - Changed `currentPos.LookVector` to `currentCFrame.LookVector` (correct API usage)
+  - Impact: Prevents crashes in ML-based dash direction prediction
+
 - **Fixed Line 1195 Error**: Added type checking in `EncodeState()` to handle invalid state parameters
   - Error: "attempt to index number with 'myHealthPercent'"
   - Solution: Added `type(state) ~= "table"` check with safe default values

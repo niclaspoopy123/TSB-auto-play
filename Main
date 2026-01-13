@@ -723,7 +723,11 @@ local function UpdateNetworkWeights(network, inputs, learningRate, clipNorm)
                     
                     local weightGrad = grad * inputValue
                     
-                    -- Safety check for Adam parameters
+                    -- Defensive check: Initialize nested arrays if they don't exist
+                    -- While these should be initialized at startup, this prevents crashes
+                    -- if UpdateNetworkWeights is called before proper initialization
+                    if not vel.m_weights[i] then vel.m_weights[i] = {} end
+                    if not vel.v_weights[i] then vel.v_weights[i] = {} end
                     if not vel.m_weights[i][j] then vel.m_weights[i][j] = 0 end
                     if not vel.v_weights[i][j] then vel.v_weights[i][j] = 0 end
                     
@@ -1634,13 +1638,31 @@ local function initializeCombatSystem(character)
   --// --- ML-BASED DASH SELECTION ---
   
   -- Use neural network to predict best dash direction based on current state
-  function AI.DeepLearning.PredictBestDashDirection(state, targetPos, currentPos)
+  function AI.DeepLearning.PredictBestDashDirection(state, targetPos, currentPart)
       -- Encode dash-specific features
       local encodedState = AI.DeepLearning.EncodeState(state)
       
+      -- Extract position and CFrame from Part with proper Roblox type checking
+      local currentPos, currentCFrame
+      if typeof(currentPart) == "Instance" and currentPart:IsA("BasePart") then
+          -- currentPart is a Roblox Part object
+          currentPos = currentPart.Position
+          currentCFrame = currentPart.CFrame
+      elseif typeof(currentPart) == "Vector3" then
+          -- currentPart is already a Vector3
+          currentPos = currentPart
+          -- Create CFrame with identity rotation (default orientation)
+          currentCFrame = CFrame.new(currentPos)
+      else
+          -- Fallback for unexpected types
+          warn("PredictBestDashDirection: Expected BasePart or Vector3, got " .. typeof(currentPart))
+          currentPos = Vector3.new(0, 0, 0)
+          currentCFrame = CFrame.new(currentPos)
+      end
+      
       -- Add directional features
       local toTarget = (targetPos - currentPos).Unit
-      local facingDir = currentPos.LookVector or Vector3.new(0, 0, 1)
+      local facingDir = currentCFrame.LookVector
       local relativeAngle = math.acos(math.clamp(toTarget:Dot(facingDir), -1, 1))
       
       -- Extend state with dash-specific features
