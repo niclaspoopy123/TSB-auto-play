@@ -723,7 +723,9 @@ local function UpdateNetworkWeights(network, inputs, learningRate, clipNorm)
                     
                     local weightGrad = grad * inputValue
                     
-                    -- Initialize nested momentum and velocity arrays for Adam optimizer if they don't exist
+                    -- Defensive check: Initialize nested arrays if they don't exist
+                    -- While these should be initialized at startup, this prevents crashes
+                    -- if UpdateNetworkWeights is called before proper initialization
                     if not vel.m_weights[i] then vel.m_weights[i] = {} end
                     if not vel.v_weights[i] then vel.v_weights[i] = {} end
                     if not vel.m_weights[i][j] then vel.m_weights[i][j] = 0 end
