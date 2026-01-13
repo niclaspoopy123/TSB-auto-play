@@ -688,6 +688,16 @@ local function UpdateNetworkWeights(network, inputs, learningRate, clipNorm)
             for i = 1, layer.size do
                 local grad = layer.gradients[i]
                 
+                -- Safety check: skip if gradient is nil or invalid
+                if not grad or type(grad) ~= "number" then
+                    warn("Invalid gradient at layer " .. layerName .. " neuron " .. i .. ", skipping update")
+                    grad = 0
+                end
+                
+                -- Additional safety for Adam parameters
+                if not vel.m_biases[i] then vel.m_biases[i] = 0 end
+                if not vel.v_biases[i] then vel.v_biases[i] = 0 end
+                
                 -- Clip gradient
                 if math.abs(grad) > clipNorm then
                     grad = grad > 0 and clipNorm or -clipNorm
@@ -704,7 +714,18 @@ local function UpdateNetworkWeights(network, inputs, learningRate, clipNorm)
                 
                 -- Update weights with Adam
                 for j = 1, #layer.weights[i] do
-                    local weightGrad = grad * layerInputs[j]
+                    local inputValue = layerInputs[j]
+                    
+                    -- Safety check for input value
+                    if not inputValue or type(inputValue) ~= "number" then
+                        inputValue = 0
+                    end
+                    
+                    local weightGrad = grad * inputValue
+                    
+                    -- Safety check for Adam parameters
+                    if not vel.m_weights[i][j] then vel.m_weights[i][j] = 0 end
+                    if not vel.v_weights[i][j] then vel.v_weights[i][j] = 0 end
                     
                     vel.m_weights[i][j] = AI.DeepNetwork.adamBeta1 * vel.m_weights[i][j] + (1 - AI.DeepNetwork.adamBeta1) * weightGrad
                     vel.v_weights[i][j] = AI.DeepNetwork.adamBeta2 * vel.v_weights[i][j] + (1 - AI.DeepNetwork.adamBeta2) * weightGrad * weightGrad
@@ -1163,7 +1184,12 @@ local function initializeCombatSystem(character)
           comboCount = 0,
           lastComboTime = 0,
           consecutiveHits = 0,
-          lastDamageDealtTime = 0, -- Track when damage was last dealt for proper timing
+          lastDamageDealtTime = 0,
+          -- ML-enhanced dash tracking
+          lastDashDirection = nil,
+          lastDashScore = 0,
+          -- Combat trick discovery
+          discoveredTricks = {}, -- Track when damage was last dealt for proper timing
           -- Adaptive learning rate
           currentLearningRate = CONST.LEARNING_RATE_ALPHA,
           recentPerformance = {},
@@ -1191,6 +1217,19 @@ local function initializeCombatSystem(character)
   
   -- Enhanced state encoding with deep features (16-dimensional state vector)
   function AI.DeepLearning.EncodeState(state)
+      -- Safety check: ensure state is a valid table
+      if type(state) ~= "table" then
+          warn("EncodeState received invalid state (type: " .. type(state) .. "), using defaults")
+          state = {
+              myHealthPercent = 0.5,
+              targetHealthPercent = 0.5,
+              distance = CONST.AGGRO_RANGE / 2,
+              energy = CONST.MAX_ENERGY / 2,
+              inRange = false,
+              isTargetAttacking = false,
+          }
+      end
+      
       local encoded = {
           state.myHealthPercent or 0,
           state.targetHealthPercent or 0,
@@ -1592,6 +1631,203 @@ local function initializeCombatSystem(character)
       end
   end
 
+  --// --- ML-BASED DASH SELECTION ---
+  
+  -- Use neural network to predict best dash direction based on current state
+  function AI.DeepLearning.PredictBestDashDirection(state, targetPos, currentPos)
+      -- Encode dash-specific features
+      local encodedState = AI.DeepLearning.EncodeState(state)
+      
+      -- Add directional features
+      local toTarget = (targetPos - currentPos).Unit
+      local facingDir = currentPos.LookVector or Vector3.new(0, 0, 1)
+      local relativeAngle = math.acos(math.clamp(toTarget:Dot(facingDir), -1, 1))
+      
+      -- Extend state with dash-specific features
+      local dashFeatures = {
+          relativeAngle / math.pi, -- Normalized angle to target
+          state.distance / CONST.AGGRO_RANGE, -- Normalized distance
+          AI.State.comboCount / 10, -- Combo context
+          AI.OpponentModel.aggressionScore or 0.5, -- Opponent behavior
+      }
+      
+      -- Combine features
+      local combinedFeatures = {}
+      for _, v in ipairs(encodedState) do table.insert(combinedFeatures, v) end
+      for _, v in ipairs(dashFeatures) do table.insert(combinedFeatures, v) end
+      
+      -- Use policy network to evaluate dash directions
+      -- Forward: W, Backward: S, Left: A, Right: D
+      local dashScores = {
+          W = 0, -- Forward
+          S = 0, -- Backward
+          A = 0, -- Left
+          D = 0, -- Right
+      }
+      
+      -- Get Q-values for different tactical contexts
+      local qValues = AI.DeepLearning.PredictQValues(encodedState, false)
+      
+      -- Score each direction based on tactical context
+      if state.myHealthPercent < 0.3 or AI.State.currentTactic == "Defensive" then
+          -- Defensive: prefer backward and side dashes
+          dashScores.S = 2.0 + (qValues[3] or 0) * 0.5 -- EVADE action value
+          dashScores.A = 1.5 + (qValues[5] or 0) * 0.3 -- REPOSITION value
+          dashScores.D = 1.5 + (qValues[5] or 0) * 0.3
+          dashScores.W = 0.5
+      elseif AI.State.currentTactic == "Aggressive" or AI.State.currentTactic == "Finisher" then
+          -- Aggressive: prefer forward and aggressive side dashes
+          dashScores.W = 2.0 + (qValues[1] or 0) * 0.5 -- ATTACK action value
+          dashScores.A = 1.2 + (qValues[6] or 0) * 0.4 -- DASH action value
+          dashScores.D = 1.2 + (qValues[6] or 0) * 0.4
+          dashScores.S = 0.3
+      else
+          -- Balanced: adapt to distance and situation
+          if state.distance > CONST.ATTACK_RANGE * 1.5 then
+              dashScores.W = 1.8 + (qValues[1] or 0) * 0.4
+              dashScores.A = 1.0
+              dashScores.D = 1.0
+              dashScores.S = 0.5
+          elseif state.distance < CONST.ATTACK_RANGE * 0.5 then
+              dashScores.S = 1.8 + (qValues[3] or 0) * 0.4
+              dashScores.A = 1.2
+              dashScores.D = 1.2
+              dashScores.W = 0.5
+          else
+              dashScores.A = 1.5 + (qValues[5] or 0) * 0.4
+              dashScores.D = 1.5 + (qValues[5] or 0) * 0.4
+              dashScores.W = 1.2
+              dashScores.S = 1.0
+          end
+      end
+      
+      -- Bonus for combos: aggressive forward dashes
+      if AI.State.comboCount > 2 then
+          dashScores.W *= 1.3
+      end
+      
+      -- Penalty for predictable patterns
+      local lastDash = AI.State.lastDashDirection or "W"
+      if dashScores[lastDash] then
+          dashScores[lastDash] *= 0.7 -- Reduce score for repeated direction
+      end
+      
+      -- Find best direction
+      local bestDir = "W"
+      local bestScore = -math.huge
+      for dir, score in pairs(dashScores) do
+          if score > bestScore then
+              bestScore = score
+              bestDir = dir
+          end
+      end
+      
+      -- Store for learning
+      AI.State.lastDashDirection = bestDir
+      AI.State.lastDashScore = bestScore
+      
+      return Enum.KeyCode[bestDir], dashScores
+  end
+  
+  --// --- COMBAT TRICK DISCOVERY ---
+  
+  -- Discover new combat tricks using ML pattern recognition
+  function AI.DeepLearning.DiscoverCombatTricks()
+      -- Analyze recent successful action sequences
+      local recentSuccesses = {}
+      
+      for i = math.max(1, #AI.ExperienceBuffer.experiences - 50), #AI.ExperienceBuffer.experiences do
+          local exp = AI.ExperienceBuffer.experiences[i]
+          if exp and exp.reward and exp.reward > 10 then -- Significant reward
+              table.insert(recentSuccesses, exp)
+          end
+      end
+      
+      if #recentSuccesses < 5 then return end
+      
+      -- Pattern detection: look for action sequences that led to high rewards
+      local actionPatterns = {}
+      
+      for i = 1, #recentSuccesses - 2 do
+          local seq = string.format("%s->%s->%s", 
+              recentSuccesses[i].action or "?",
+              recentSuccesses[i+1].action or "?",
+              recentSuccesses[i+2].action or "?")
+          
+          actionPatterns[seq] = (actionPatterns[seq] or 0) + 1
+      end
+      
+      -- Find most effective patterns
+      local bestPattern = nil
+      local bestCount = 0
+      
+      for pattern, count in pairs(actionPatterns) do
+          if count > bestCount then
+              bestCount = count
+              bestPattern = pattern
+          end
+      end
+      
+      -- Store discovered trick
+      if bestPattern and bestCount >= 3 then
+          AI.State.discoveredTricks = AI.State.discoveredTricks or {}
+          if not AI.State.discoveredTricks[bestPattern] then
+              AI.State.discoveredTricks[bestPattern] = {
+                  count = bestCount,
+                  avgReward = 0,
+                  discovered = os.clock()
+              }
+              print("🔥 NEW COMBAT TRICK DISCOVERED: " .. bestPattern .. " (effectiveness: " .. bestCount .. ")")
+              
+              -- Increase reward for this pattern
+              for _, exp in ipairs(recentSuccesses) do
+                  if exp.action and string.find(bestPattern, exp.action) then
+                      -- Boost learning for this action in similar states
+                      AI.Learning.Reinforce(exp.tactic, exp.action, 15, exp.nextState)
+                  end
+              end
+          end
+      end
+      
+      -- Adaptation: Look for state-specific tricks
+      local statePatterns = {}
+      for _, exp in ipairs(recentSuccesses) do
+          if exp.state then
+              local stateKey = string.format("H:%.1f_D:%.0f_T:%s", 
+                  exp.state.myHealthPercent or 0, 
+                  exp.state.distance or 0,
+                  exp.tactic or "?")
+              
+              statePatterns[stateKey] = statePatterns[stateKey] or {}
+              table.insert(statePatterns[stateKey], exp.action)
+          end
+      end
+      
+      -- Find context-specific effective actions
+      for stateKey, actions in pairs(statePatterns) do
+          if #actions >= 3 then
+              local actionCounts = {}
+              for _, action in ipairs(actions) do
+                  actionCounts[action] = (actionCounts[action] or 0) + 1
+              end
+              
+              -- Find dominant action in this state
+              local bestAction = nil
+              local bestActionCount = 0
+              for action, count in pairs(actionCounts) do
+                  if count > bestActionCount then
+                      bestActionCount = count
+                      bestAction = action
+                  end
+              end
+              
+              if bestAction and bestActionCount >= 2 then
+                  print("📊 Pattern learned: In state " .. stateKey .. ", " .. bestAction .. " is effective (" .. bestActionCount .. " successes)")
+              end
+          end
+      end
+  end
+
   --// --- LEARNING MODULE ---
   
   -- Store experience in replay buffer with proportional prioritization
@@ -1920,6 +2156,11 @@ local function initializeCombatSystem(character)
       
       -- Update Boltzmann temperature
       AI.State.boltzmannTemperature = math.max(0.1, AI.State.boltzmannTemperature * CONST.TEMPERATURE_DECAY)
+      
+      -- Periodic combat trick discovery (every 100 trials)
+      if AI.ActionStats.totalTrials % 100 == 0 then
+          AI.DeepLearning.DiscoverCombatTricks()
+      end
   end
   
   -- Perform experience replay learning with deep network updates and importance sampling
@@ -2744,26 +2985,39 @@ local function initializeCombatSystem(character)
           AI.State.lastActionTimes.EVADE = now
           AI.State.isPerfectDodging, AI.State.dodgeStartTime = true, now
       elseif action == "DASH" then
-          -- Smart dash direction based on tactical situation
-          local dashDirection
-          local currentDist = (rootPart.Position - targetPos).Magnitude
+          -- ML-based smart dash direction selection
+          local dashDirection, dashScores
           
-          -- Choose dash direction based on tactic and distance
-          if AI.State.currentTactic == "Defensive" or state.myHealthPercent < 0.3 then
-              -- Backdash when defensive or low health
-              dashDirection = Enum.KeyCode.S
-          elseif AI.State.currentTactic == "Aggressive" or AI.State.currentTactic == "Finisher" then
-              -- Forward dash when aggressive
-              dashDirection = Enum.KeyCode.W
-          elseif currentDist > CONST.ATTACK_RANGE * 1.5 then
-              -- Forward dash to close distance
-              dashDirection = Enum.KeyCode.W
-          elseif currentDist < CONST.ATTACK_RANGE * 0.5 then
-              -- Backdash to create space when too close
-              dashDirection = Enum.KeyCode.S
+          -- Use ML prediction if we have enough learning data
+          if AI.ActionStats.totalTrials > 100 then
+              dashDirection, dashScores = AI.DeepLearning.PredictBestDashDirection(state, targetPos, rootPart)
+              
+              if CONST.DEBUG_MODE then
+                  print("ML Dash: Direction=" .. tostring(dashDirection) .. " Scores: W=" .. 
+                      string.format("%.2f", dashScores.W) .. " S=" .. string.format("%.2f", dashScores.S) .. 
+                      " A=" .. string.format("%.2f", dashScores.A) .. " D=" .. string.format("%.2f", dashScores.D))
+              end
           else
-              -- Side dash for repositioning (randomly left or right)
-              dashDirection = math.random() > 0.5 and Enum.KeyCode.A or Enum.KeyCode.D
+              -- Fallback to rule-based system during early learning
+              local currentDist = (rootPart.Position - targetPos).Magnitude
+              
+              -- Choose dash direction based on tactic and distance
+              if AI.State.currentTactic == "Defensive" or state.myHealthPercent < 0.3 then
+                  -- Backdash when defensive or low health
+                  dashDirection = Enum.KeyCode.S
+              elseif AI.State.currentTactic == "Aggressive" or AI.State.currentTactic == "Finisher" then
+                  -- Forward dash when aggressive
+                  dashDirection = Enum.KeyCode.W
+              elseif currentDist > CONST.ATTACK_RANGE * 1.5 then
+                  -- Forward dash to close distance
+                  dashDirection = Enum.KeyCode.W
+              elseif currentDist < CONST.ATTACK_RANGE * 0.5 then
+                  -- Backdash to create space when too close
+                  dashDirection = Enum.KeyCode.S
+              else
+                  -- Side dash for repositioning (randomly left or right)
+                  dashDirection = math.random() > 0.5 and Enum.KeyCode.A or Enum.KeyCode.D
+              end
           end
           
           communicateEvent:FireServer({["Dash"]=dashDirection, ["Key"]=Enum.KeyCode.Q, ["Goal"]="KeyPress"})
