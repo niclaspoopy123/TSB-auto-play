@@ -1238,6 +1238,15 @@ local function initializeCombatSystem(character)
       CLONE_ATTACK_PROBABILITY = 0.6, -- 60% chance to use attack when in range
       CLONE_SPECIAL_PROBABILITY = 0.3, -- 30% chance to use special when in range
       CLONE_ATTACK_WINDOW = 0.5, -- Time window to keep attack flag after tool is disabled
+      -- Awakening/Ultimate constants
+      AUTO_AWAKEN_HP_THRESHOLD = 0.30, -- Auto-awaken when HP < 30%
+      AWAKEN_COOLDOWN = 5.0, -- Cooldown between awaken attempts
+      ULTIMATE_COOLDOWN = 30.0, -- Cooldown between ultimate uses
+      AWAKEN_KEY = Enum.KeyCode.G, -- Awakening key (default G)
+      ULTIMATE_KEY = Enum.KeyCode.R, -- Ultimate key (varies by character, R is common)
+      TARGET_RAGDOLL_CHECK_INTERVAL = 0.2, -- How often to check target ragdoll state
+      AWAKEN_ENERGY_COST = 0, -- Energy cost to awaken (usually free)
+      ULTIMATE_ENERGY_COST = 50, -- Energy cost for ultimate
   }
 
   --// --- STATE MANAGEMENT ---
@@ -1245,7 +1254,7 @@ local function initializeCombatSystem(character)
       AI.State = {
           currentTarget = nil, targetHumanoid = nil, targetTorso = nil,
           combatState = "IDLE", currentTactic = "BaitAndPunish",
-          lastActionTimes = { ATTACK = 0, SPECIAL = 0, EVADE = 0, FEINT = 0, DASH = 0, BLOCK = 0 },
+          lastActionTimes = { ATTACK = 0, SPECIAL = 0, EVADE = 0, FEINT = 0, DASH = 0, BLOCK = 0, AWAKEN = 0, ULTIMATE = 0 },
           strafeDirection = 1, lastStrafeChange = 0, lastAction = "IDLE",
           lastTargetScanTime = 0, currentEnergy = maxEnergy,
           lastTargetHealth = 0, myHealth = humanoid.Health,
@@ -1257,6 +1266,13 @@ local function initializeCombatSystem(character)
           tacticConfidence = 100, lastTacticChangeTime = 0,
           isTargetAttacking = false,
           lastExploitSeekerTriggerTime = 0,
+          -- Awakening/Ultimate state tracking
+          isAwakened = false, -- Whether awakening mode (G) is active
+          awakenAttempted = false, -- Track if we've tried to awaken this life
+          canUseUltimate = false, -- Whether ultimate is available
+          lastUltimateTime = 0, -- Last time ultimate was used
+          targetIsRagdolled = false, -- Target ragdoll/stunned state
+          targetIsStunned = false, -- Target stunned state
           -- New fields for enhanced learning
           epsilon = CONST.INITIAL_EPSILON,
           actionsSinceReplay = 0,
@@ -4111,8 +4127,90 @@ local function initializeCombatSystem(character)
           inRange = distance <= CONST.ATTACK_RANGE,
           isTargetAttacking = AI.State.isTargetAttacking,
       }
+      
+      -- Check target ragdoll/stunned state (for ultimate timing)
+      if AI.State.targetHumanoid then
+          local targetState = AI.State.targetHumanoid:GetState()
+          AI.State.targetIsRagdolled = targetState == Enum.HumanoidStateType.Ragdoll or 
+                                       targetState == Enum.HumanoidStateType.FallingDown or
+                                       targetState == Enum.HumanoidStateType.Flying
+          AI.State.targetIsStunned = AI.State.targetIsRagdolled or 
+                                     (AI.State.targetTorso.AssemblyLinearVelocity and 
+                                      AI.State.targetTorso.AssemblyLinearVelocity.Magnitude < 5 and
+                                      not AI.State.isTargetAttacking)
+      end
+      
+      -- Priority: Auto-Awakening Logic (if not already awakened)
+      if not AI.State.isAwakened and not AI.State.awakenAttempted then
+          local shouldAwaken = false
+          local awakenReason = ""
+          
+          -- Condition 1: Critical HP (< 30%)
+          if myHealthPercent < CONST.AUTO_AWAKEN_HP_THRESHOLD then
+              shouldAwaken = true
+              awakenReason = "Critical HP"
+          end
+          
+          -- Condition 2: Awakening bar full AND opponent stunned/ragdolled
+          -- Note: We can't directly check awakening bar, so we assume it's available after taking some damage
+          -- In a real implementation, you'd check for a GUI element or character value
+          if myHealthPercent < 0.7 and AI.State.targetIsStunned then
+              shouldAwaken = true
+              awakenReason = "Opponent Stunned + Bar Ready"
+          end
+          
+          -- Execute awakening if conditions met and cooldown passed
+          if shouldAwaken and (now - AI.State.lastActionTimes.AWAKEN) > CONST.AWAKEN_COOLDOWN then
+              if communicateEvent then
+                  communicateEvent:FireServer({["Goal"]="KeyPress", ["Key"]=CONST.AWAKEN_KEY})
+                  task.wait(0.1) -- Brief wait for activation
+                  communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=CONST.AWAKEN_KEY})
+              end
+              AI.State.lastActionTimes.AWAKEN = now
+              AI.State.awakenAttempted = true
+              AI.State.isAwakened = true -- Assume success (can be refined with actual checks)
+              print("🔥 AUTO-AWAKENED! Reason:", awakenReason)
+          end
+      end
+      
+      -- Priority: Ultimate Finisher Logic (only when target is vulnerable)
+      if AI.State.isAwakened and (now - AI.State.lastUltimateTime) > CONST.ULTIMATE_COOLDOWN then
+          local shouldUseUltimate = false
+          local ultimateReason = ""
+          
+          -- Condition 1: Target is ragdolled (guaranteed hit)
+          if AI.State.targetIsRagdolled and distance < CONST.ATTACK_RANGE * 1.5 then
+              shouldUseUltimate = true
+              ultimateReason = "Target Ragdolled"
+          end
+          
+          -- Condition 2: Target is stunned/low mobility
+          if AI.State.targetIsStunned and distance < CONST.ATTACK_RANGE and state.energy >= CONST.ULTIMATE_ENERGY_COST then
+              shouldUseUltimate = true
+              ultimateReason = "Target Stunned"
+          end
+          
+          -- Condition 3: Target very low HP and in range (finisher)
+          if targetHealthPercent < 0.15 and distance < CONST.ATTACK_RANGE * 1.2 then
+              shouldUseUltimate = true
+              ultimateReason = "Finisher (Low HP)"
+          end
+          
+          -- Execute ultimate if conditions met
+          if shouldUseUltimate and state.energy >= CONST.ULTIMATE_ENERGY_COST then
+              if communicateEvent then
+                  communicateEvent:FireServer({["Goal"]="KeyPress", ["Key"]=CONST.ULTIMATE_KEY})
+                  task.wait(0.1) -- Brief wait for activation
+                  communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=CONST.ULTIMATE_KEY})
+              end
+              AI.State.lastUltimateTime = now
+              AI.State.currentEnergy -= CONST.ULTIMATE_ENERGY_COST
+              print("💥 ULTIMATE USED! Reason:", ultimateReason)
+              return -- Skip normal action this frame
+          end
+      end
 
-      -- Single-pass decision pipeline
+      -- Single-pass decision pipeline (normal actions)
       AI.State.currentTactic = AI.Evaluation.ChooseTactic(state)
       local bestAction = AI.Evaluation.FindBestActionByScore(state, AI.State.currentTactic)
       AI.Actions.Execute(bestAction, state)
