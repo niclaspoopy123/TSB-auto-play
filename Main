@@ -118,6 +118,109 @@ local TrainingMode = {
     cloneConnections = {}, -- Event connections for clone AI
 }
 
+--// ================= UTILITY FEATURES ================= //
+local UtilityConfig = {
+    -- Player Whitelist/Team Mode
+    whitelistEnabled = false,
+    whitelistedPlayers = {}, -- List of UserIds to never target
+    friendsWhitelisted = true, -- Automatically whitelist friends
+    
+    -- Server Hopping
+    serverHoppingEnabled = false,
+    minPlayersBeforeHop = 2, -- Hop if server has less than this many players
+    hopOnNegativeScore = true, -- Hop if score drops below threshold
+    scoreThresholdForHop = -50, -- Hop if score is below this
+    lastHopTime = 0,
+    hopCooldown = 300, -- 5 minutes between hops
+    
+    -- Anti-AFK
+    antiAFKEnabled = true,
+    afkActionInterval = 60, -- Send input every 60 seconds
+    lastAFKAction = 0,
+}
+
+-- Function to check if a player is whitelisted
+local function IsPlayerWhitelisted(targetPlayer)
+    if not UtilityConfig.whitelistEnabled then return false end
+    
+    -- Check explicit whitelist
+    for _, userId in ipairs(UtilityConfig.whitelistedPlayers) do
+        if targetPlayer.UserId == userId then
+            return true
+        end
+    end
+    
+    -- Check if player is a friend
+    if UtilityConfig.friendsWhitelisted and targetPlayer:IsFriendsWith(player.UserId) then
+        return true
+    end
+    
+    return false
+end
+
+-- Function to perform server hop
+local function ServerHop()
+    local now = os.clock()
+    if now - UtilityConfig.lastHopTime < UtilityConfig.hopCooldown then
+        print("Server hop on cooldown. Wait", math.ceil(UtilityConfig.hopCooldown - (now - UtilityConfig.lastHopTime)), "seconds")
+        return
+    end
+    
+    print("🔄 Attempting to hop to a new server...")
+    UtilityConfig.lastHopTime = now
+    
+    -- Use TeleportService to find and join a different server
+    local TeleportService = game:GetService("TeleportService")
+    local success, errorMsg = pcall(function()
+        -- Get current place ID
+        local placeId = game.PlaceId
+        -- Teleport to the same place (different server)
+        TeleportService:Teleport(placeId, player)
+    end)
+    
+    if not success then
+        warn("Server hop failed:", errorMsg)
+    end
+end
+
+-- Anti-AFK action
+local function PerformAntiAFKAction()
+    -- Send random movement input to prevent AFK kick
+    local randomActions = {
+        function() -- Jump
+            if character and character:FindFirstChild("Humanoid") then
+                character.Humanoid.Jump = true
+            end
+        end,
+        function() -- Small movement
+            if character and character:FindFirstChild("HumanoidRootPart") then
+                local hrp = character.HumanoidRootPart
+                local randomOffset = Vector3.new(
+                    math.random(-5, 5),
+                    0,
+                    math.random(-5, 5)
+                )
+                character.Humanoid:MoveTo(hrp.Position + randomOffset)
+            end
+        end,
+        function() -- Crouch (if available)
+            -- Some games use C for crouch, this is a generic action
+            if character then
+                task.wait(0.1)
+            end
+        end
+    }
+    
+    -- Execute a random anti-AFK action
+    local action = randomActions[math.random(#randomActions)]
+    pcall(action)
+    
+    UtilityConfig.lastAFKAction = os.clock()
+    if CONST and CONST.DEBUG_MODE then
+        print("Anti-AFK action performed")
+    end
+end
+
 --// ================= GUI CREATION ================= //
 local function CreateTrainingGUI(char, rp)
     -- Create ScreenGui
@@ -3536,6 +3639,13 @@ local function initializeCombatSystem(character)
   local function GetTargetScore(targetCharacter)
       -- Fast validity checks with early returns
       if not targetCharacter or not targetCharacter.Parent then return 0 end
+      
+      -- Check whitelist before scoring
+      local targetPlayer = Players:GetPlayerFromCharacter(targetCharacter)
+      if targetPlayer and IsPlayerWhitelisted(targetPlayer) then
+          return 0 -- Skip whitelisted players
+      end
+      
       local root = targetCharacter:FindFirstChild("HumanoidRootPart")
       if not root then return 0 end
       
@@ -4104,6 +4214,36 @@ local function initializeCombatSystem(character)
       end
 
       RunGlitchScanner() -- Run the scanner every state update.
+      
+      -- Utility Features Update
+      -- Anti-AFK check
+      if UtilityConfig.antiAFKEnabled and (now - UtilityConfig.lastAFKAction) > UtilityConfig.afkActionInterval then
+          PerformAntiAFKAction()
+      end
+      
+      -- Server Hopping checks
+      if UtilityConfig.serverHoppingEnabled then
+          local shouldHop = false
+          local hopReason = ""
+          
+          -- Check 1: Too few players
+          local playerCount = #Players:GetPlayers()
+          if playerCount < UtilityConfig.minPlayersBeforeHop then
+              shouldHop = true
+              hopReason = "Too few players (" .. playerCount .. ")"
+          end
+          
+          -- Check 2: Negative score threshold
+          if UtilityConfig.hopOnNegativeScore and AI.Score < UtilityConfig.scoreThresholdForHop then
+              shouldHop = true
+              hopReason = "Score too low (" .. AI.Score .. ")"
+          end
+          
+          if shouldHop then
+              print("Server hop triggered:", hopReason)
+              ServerHop()
+          end
+      end
   end
 
   local function UpdateLearningAndRewards(now)
