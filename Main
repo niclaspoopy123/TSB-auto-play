@@ -349,6 +349,262 @@ local function CreateTrainingGUI(char, rp)
     return screenGui
 end
 
+--// ================= ESP & DEBUG HUD CREATION ================= //
+local function CreateESPAndDebugHUD()
+    -- Create ScreenGui for ESP and Debug HUD
+    local espGui = Instance.new("ScreenGui")
+    espGui.Name = "TSB_AI_ESP_HUD"
+    espGui.ResetOnSpawn = false
+    espGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    espGui.IgnoreGuiInset = true -- Draw on entire screen
+    
+    -- Decision HUD Frame (top-left corner)
+    local hudFrame = Instance.new("Frame")
+    hudFrame.Name = "DecisionHUD"
+    hudFrame.Size = UDim2.new(0, 350, 0, 140)
+    hudFrame.Position = UDim2.new(0.01, 0, 0.05, 0)
+    hudFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+    hudFrame.BorderSizePixel = 2
+    hudFrame.BorderColor3 = Color3.fromRGB(80, 150, 255)
+    hudFrame.BackgroundTransparency = 0.3
+    hudFrame.Parent = espGui
+    
+    -- Add corner radius
+    local hudCorner = Instance.new("UICorner")
+    hudCorner.CornerRadius = UDim.new(0, 8)
+    hudCorner.Parent = hudFrame
+    
+    -- HUD Title
+    local hudTitle = Instance.new("TextLabel")
+    hudTitle.Name = "Title"
+    hudTitle.Size = UDim2.new(1, 0, 0, 30)
+    hudTitle.Position = UDim2.new(0, 0, 0, 0)
+    hudTitle.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+    hudTitle.BorderSizePixel = 0
+    hudTitle.Text = "🤖 AI DECISION HUD"
+    hudTitle.TextColor3 = Color3.fromRGB(150, 200, 255)
+    hudTitle.TextSize = 16
+    hudTitle.Font = Enum.Font.GothamBold
+    hudTitle.TextXAlignment = Enum.TextXAlignment.Center
+    hudTitle.Parent = hudFrame
+    
+    local hudTitleCorner = Instance.new("UICorner")
+    hudTitleCorner.CornerRadius = UDim.new(0, 6)
+    hudTitleCorner.Parent = hudTitle
+    
+    -- State Label
+    local stateLabel = Instance.new("TextLabel")
+    stateLabel.Name = "StateLabel"
+    stateLabel.Size = UDim2.new(1, -10, 0, 20)
+    stateLabel.Position = UDim2.new(0, 5, 0, 35)
+    stateLabel.BackgroundTransparency = 1
+    stateLabel.Text = "State: IDLE"
+    stateLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    stateLabel.TextSize = 14
+    stateLabel.Font = Enum.Font.GothamMedium
+    stateLabel.TextXAlignment = Enum.TextXAlignment.Left
+    stateLabel.Parent = hudFrame
+    
+    -- Tactic Label
+    local tacticLabel = Instance.new("TextLabel")
+    tacticLabel.Name = "TacticLabel"
+    tacticLabel.Size = UDim2.new(1, -10, 0, 20)
+    tacticLabel.Position = UDim2.new(0, 5, 0, 55)
+    tacticLabel.BackgroundTransparency = 1
+    tacticLabel.Text = "Tactic: BaitAndPunish"
+    tacticLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
+    tacticLabel.TextSize = 14
+    tacticLabel.Font = Enum.Font.GothamMedium
+    tacticLabel.TextXAlignment = Enum.TextXAlignment.Left
+    tacticLabel.Parent = hudFrame
+    
+    -- Target Label
+    local targetLabel = Instance.new("TextLabel")
+    targetLabel.Name = "TargetLabel"
+    targetLabel.Size = UDim2.new(1, -10, 0, 20)
+    targetLabel.Position = UDim2.new(0, 5, 0, 75)
+    targetLabel.BackgroundTransparency = 1
+    targetLabel.Text = "Target: None"
+    targetLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+    targetLabel.TextSize = 14
+    targetLabel.Font = Enum.Font.GothamMedium
+    targetLabel.TextXAlignment = Enum.TextXAlignment.Left
+    targetLabel.Parent = hudFrame
+    
+    -- Confidence Label
+    local confidenceLabel = Instance.new("TextLabel")
+    confidenceLabel.Name = "ConfidenceLabel"
+    confidenceLabel.Size = UDim2.new(1, -10, 0, 20)
+    confidenceLabel.Position = UDim2.new(0, 5, 0, 95)
+    confidenceLabel.BackgroundTransparency = 1
+    confidenceLabel.Text = "Confidence: 100%"
+    confidenceLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+    confidenceLabel.TextSize = 14
+    confidenceLabel.Font = Enum.Font.GothamMedium
+    confidenceLabel.TextXAlignment = Enum.TextXAlignment.Left
+    confidenceLabel.Parent = hudFrame
+    
+    -- Action Label
+    local actionLabel = Instance.new("TextLabel")
+    actionLabel.Name = "ActionLabel"
+    actionLabel.Size = UDim2.new(1, -10, 0, 20)
+    actionLabel.Position = UDim2.new(0, 5, 0, 115)
+    actionLabel.BackgroundTransparency = 1
+    actionLabel.Text = "Action: REPOSITION"
+    actionLabel.TextColor3 = Color3.fromRGB(150, 150, 255)
+    actionLabel.TextSize = 14
+    actionLabel.Font = Enum.Font.GothamMedium
+    actionLabel.TextXAlignment = Enum.TextXAlignment.Left
+    actionLabel.Parent = hudFrame
+    
+    -- ESP Container (for enemy boxes)
+    local espContainer = Instance.new("Folder")
+    espContainer.Name = "ESPContainer"
+    espContainer.Parent = espGui
+    
+    espGui.Parent = player:WaitForChild("PlayerGui")
+    
+    -- Function to update HUD
+    local function UpdateHUD()
+        if AI.State then
+            stateLabel.Text = "State: " .. (AI.State.combatState or "IDLE")
+            tacticLabel.Text = "Tactic: " .. (AI.State.currentTactic or "N/A")
+            
+            if AI.State.currentTarget then
+                local targetName = AI.State.currentTarget.Name
+                local targetPlayer = Players:GetPlayerFromCharacter(AI.State.currentTarget)
+                if targetPlayer then
+                    targetName = targetPlayer.Name
+                end
+                targetLabel.Text = "Target: " .. targetName
+            else
+                targetLabel.Text = "Target: None"
+            end
+            
+            local confidence = AI.State.tacticConfidence or 100
+            confidenceLabel.Text = string.format("Confidence: %d%%", math.floor(confidence))
+            
+            -- Color code confidence
+            if confidence > 70 then
+                confidenceLabel.TextColor3 = Color3.fromRGB(100, 255, 100) -- Green
+            elseif confidence > 40 then
+                confidenceLabel.TextColor3 = Color3.fromRGB(255, 255, 100) -- Yellow
+            else
+                confidenceLabel.TextColor3 = Color3.fromRGB(255, 100, 100) -- Red
+            end
+            
+            actionLabel.Text = "Action: " .. (AI.State.lastAction or "IDLE")
+        end
+    end
+    
+    -- Function to create/update ESP for enemies
+    local function UpdateESP()
+        -- Clear old ESP elements
+        for _, espElement in ipairs(espContainer:GetChildren()) do
+            espElement:Destroy()
+        end
+        
+        -- Create ESP for all visible enemies
+        for _, otherPlayer in ipairs(Players:GetPlayers()) do
+            if otherPlayer ~= player and otherPlayer.Character then
+                local targetChar = otherPlayer.Character
+                local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+                local targetHumanoid = targetChar:FindFirstChildOfClass("Humanoid")
+                
+                if targetRoot and targetHumanoid and targetHumanoid.Health > 0 then
+                    -- Create BillboardGui for ESP
+                    local billboard = Instance.new("BillboardGui")
+                    billboard.Name = "ESP_" .. otherPlayer.Name
+                    billboard.Adornee = targetRoot
+                    billboard.Size = UDim2.new(4, 0, 5, 0)
+                    billboard.AlwaysOnTop = true
+                    billboard.Parent = espContainer
+                    
+                    -- Create ESP Box
+                    local espBox = Instance.new("Frame")
+                    espBox.Size = UDim2.new(1, 0, 1, 0)
+                    espBox.BackgroundTransparency = 0.7
+                    espBox.BorderSizePixel = 2
+                    espBox.Parent = billboard
+                    
+                    -- Determine threat level and color
+                    local isCurrentTarget = AI.State.currentTarget == targetChar
+                    local distance = (player.Character and player.Character:FindFirstChild("HumanoidRootPart")) and
+                                     (player.Character.HumanoidRootPart.Position - targetRoot.Position).Magnitude or 999
+                    
+                    local threatColor, threatText
+                    if isCurrentTarget then
+                        threatColor = Color3.fromRGB(255, 50, 50) -- Red for current target
+                        threatText = "🎯 ENGAGING"
+                    elseif targetHumanoid.Health < targetHumanoid.MaxHealth * 0.3 then
+                        threatColor = Color3.fromRGB(255, 150, 0) -- Orange for low HP
+                        threatText = "⚠️ LOW HP"
+                    elseif AI.State and AI.State.targetIsRagdolled then
+                        threatColor = Color3.fromRGB(100, 255, 100) -- Green for stunned
+                        threatText = "✓ STUNNED"
+                    elseif distance < 50 then
+                        threatColor = Color3.fromRGB(255, 255, 50) -- Yellow for nearby
+                        threatText = "⚡ NEARBY"
+                    else
+                        threatColor = Color3.fromRGB(150, 150, 255) -- Blue for distant
+                        threatText = "👁️ TRACKED"
+                    end
+                    
+                    espBox.BackgroundColor3 = threatColor
+                    espBox.BorderColor3 = threatColor
+                    
+                    -- Add corner radius
+                    local boxCorner = Instance.new("UICorner")
+                    boxCorner.CornerRadius = UDim.new(0, 6)
+                    boxCorner.Parent = espBox
+                    
+                    -- Threat label
+                    local threatLabel = Instance.new("TextLabel")
+                    threatLabel.Size = UDim2.new(1, 0, 0, 20)
+                    threatLabel.Position = UDim2.new(0, 0, 0, -25)
+                    threatLabel.BackgroundTransparency = 1
+                    threatLabel.Text = threatText
+                    threatLabel.TextColor3 = threatColor
+                    threatLabel.TextSize = 12
+                    threatLabel.Font = Enum.Font.GothamBold
+                    threatLabel.TextStrokeTransparency = 0.5
+                    threatLabel.Parent = billboard
+                    
+                    -- Player name label
+                    local nameLabel = Instance.new("TextLabel")
+                    nameLabel.Size = UDim2.new(1, 0, 0, 20)
+                    nameLabel.Position = UDim2.new(0, 0, 1, 5)
+                    nameLabel.BackgroundTransparency = 1
+                    nameLabel.Text = otherPlayer.Name
+                    nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+                    nameLabel.TextSize = 11
+                    nameLabel.Font = Enum.Font.Gotham
+                    nameLabel.TextStrokeTransparency = 0.5
+                    nameLabel.Parent = billboard
+                    
+                    -- Distance label
+                    local distLabel = Instance.new("TextLabel")
+                    distLabel.Size = UDim2.new(1, 0, 0, 18)
+                    distLabel.Position = UDim2.new(0, 0, 1, 25)
+                    distLabel.BackgroundTransparency = 1
+                    distLabel.Text = string.format("%.1fm", distance)
+                    distLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+                    distLabel.TextSize = 10
+                    distLabel.Font = Enum.Font.Gotham
+                    distLabel.TextStrokeTransparency = 0.5
+                    distLabel.Parent = billboard
+                end
+            end
+        end
+    end
+    
+    return {
+        GUI = espGui,
+        UpdateHUD = UpdateHUD,
+        UpdateESP = UpdateESP
+    }
+end
+
 --// ================= AI'S PERSISTENT BRAIN ================= //
 -- This table stores the AI's long-term memory, including learned values and statistics.
 -- It persists across character resets, allowing the AI to learn over multiple sessions.
@@ -4337,6 +4593,29 @@ local function initializeCombatSystem(character)
   
   -- Create Training GUI
   CreateTrainingGUI(character, rootPart)
+  
+  -- Create ESP & Debug HUD
+  local espHUD = CreateESPAndDebugHUD()
+  
+  -- Add HUD and ESP update to heartbeat loop
+  table.insert(connections, RunService.Heartbeat:Connect(function()
+      -- Update HUD every frame
+      pcall(function()
+          espHUD.UpdateHUD()
+      end)
+  end))
+  
+  -- Add ESP update on a slower interval (for performance)
+  local lastESPUpdate = 0
+  table.insert(connections, RunService.Heartbeat:Connect(function()
+      local now = os.clock()
+      if now - lastESPUpdate > 0.1 then -- Update ESP 10 times per second
+          pcall(function()
+              espHUD.UpdateESP()
+          end)
+          lastESPUpdate = now
+      end
+  end))
 end
 
 --// ================= SCRIPT ENTRY POINT ================= //
