@@ -231,7 +231,8 @@ local CombatTech = {
     -- Dash Tech: Cancel end-lag of attacks with a dash
     -- Common in TSB for faster combo execution
     dashTech = function(currentAction)
-        if not CombatTech.dashTechEnabled then return false end
+        -- Safety check: CombatTech might be nil if called after character reset
+        if not CombatTech or not CombatTech.dashTechEnabled then return false end
         
         -- Dash tech is useful after ATTACK or SPECIAL to cancel recovery frames
         if currentAction == "ATTACK" or currentAction == "SPECIAL" then
@@ -251,7 +252,8 @@ local CombatTech = {
     
     -- Side Dash Tech: Quick lateral movement during combos
     sideDashTech = function()
-        if not CombatTech.sideDashTechEnabled then return false end
+        -- Safety check: CombatTech might be nil if called after character reset
+        if not CombatTech or not CombatTech.sideDashTechEnabled then return false end
         
         -- Use side dash during active combat for unpredictability
         if AI.State and AI.State.comboCount > 1 and math.random() < 0.2 then -- 20% chance
@@ -271,7 +273,8 @@ local CombatTech = {
     -- Combo Extension: String together attacks with optimal timing
     -- This is called after successful hits to continue pressure
     comboExtension = function(lastAction, comboCount)
-        if not CombatTech.enabled then return nil end
+        -- Safety check: CombatTech might be nil if called after character reset
+        if not CombatTech or not CombatTech.enabled then return nil end
         
         -- Suggest next action based on combo state
         if comboCount == 1 then
@@ -408,6 +411,12 @@ local function CreateTrainingGUI(char, rp)
     
     -- Helper function to create clone (local to GUI)
     local function createCloneLocal()
+        -- Safety check: ensure rootPart still exists
+        if not rp or not rp.Parent then
+            warn("Cannot create AI clone: character rootPart is invalid")
+            return
+        end
+        
         if TrainingMode.cloneCharacter then
             TrainingMode.cloneCharacter:Destroy()
         end
@@ -3745,6 +3754,12 @@ local function initializeCombatSystem(character)
   end
   
   local function CreateAIClone()
+      -- Safety check: ensure character still exists
+      if not rootPart or not rootPart.Parent then
+          warn("Cannot create AI clone: character rootPart is invalid")
+          return nil
+      end
+      
       -- Cleanup existing clone
       if TrainingMode.cloneCharacter then
           TrainingMode.cloneCharacter:Destroy()
