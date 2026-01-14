@@ -1624,6 +1624,51 @@ local function initializeCombatSystem(character)
       return CHARACTER_DATA.Default
   end
 
+  -- CHARACTER-SPECIFIC MODELS: Load weights for current character
+  function AI.Learning.LoadCharacterModel(characterName)
+      local models = AI.CharacterModels
+      models.currentCharacter = characterName
+      
+      -- Initialize character weights if they don't exist
+      if not models.characterWeights[characterName] then
+          print(`Creating new character model for: {characterName}`)
+          models.characterWeights[characterName] = {
+              ActionStats = {
+                  totalTrials = 0,
+                  Aggressive = { total = 0, ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
+                  Defensive = { total = 0, ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
+                  BaitAndPunish = { total = 0, ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
+                  Finisher = { total = 0, ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
+                  ExploitSeeker = { total = 0, ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
+              },
+              QNetworkB = {
+                  Aggressive = { ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
+                  Defensive = { ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
+                  BaitAndPunish = { ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
+                  Finisher = { ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
+                  ExploitSeeker = { ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
+              },
+          }
+      else
+          print(`Loading existing character model for: {characterName} (Trials: {models.characterWeights[characterName].ActionStats.totalTrials})`)
+      end
+      
+      -- Load the character-specific weights into active AI
+      models.activeModel = models.characterWeights[characterName]
+      AI.ActionStats = models.activeModel.ActionStats
+      AI.QNetworkB = models.activeModel.QNetworkB
+  end
+  
+  -- CHARACTER-SPECIFIC MODELS: Save current weights for character
+  function AI.Learning.SaveCharacterModel()
+      local models = AI.CharacterModels
+      if models.currentCharacter ~= "Unknown" and models.activeModel then
+          -- Weights are already in sync (we're pointing to the same table)
+          -- Just log for confirmation
+          print(`Character model saved for: {models.currentCharacter} (Trials: {AI.ActionStats.totalTrials})`)
+      end
+  end
+
   local characterInfo = IdentifyCharacter()
   
   -- Load character-specific Q-learning model
@@ -3156,51 +3201,6 @@ local function initializeCombatSystem(character)
                   end
               end
           end
-      end
-  end
-  
-  -- CHARACTER-SPECIFIC MODELS: Load weights for current character
-  function AI.Learning.LoadCharacterModel(characterName)
-      local models = AI.CharacterModels
-      models.currentCharacter = characterName
-      
-      -- Initialize character weights if they don't exist
-      if not models.characterWeights[characterName] then
-          print(`Creating new character model for: {characterName}`)
-          models.characterWeights[characterName] = {
-              ActionStats = {
-                  totalTrials = 0,
-                  Aggressive = { total = 0, ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
-                  Defensive = { total = 0, ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
-                  BaitAndPunish = { total = 0, ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
-                  Finisher = { total = 0, ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
-                  ExploitSeeker = { total = 0, ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
-              },
-              QNetworkB = {
-                  Aggressive = { ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
-                  Defensive = { ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
-                  BaitAndPunish = { ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
-                  Finisher = { ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
-                  ExploitSeeker = { ATTACK = { count = 0, value = 0, eligibility = 0 }, SPECIAL = { count = 0, value = 0, eligibility = 0 }, EVADE = { count = 0, value = 0, eligibility = 0 }, FEINT = { count = 0, value = 0, eligibility = 0 }, REPOSITION = { count = 0, value = 0, eligibility = 0 }, DASH = { count = 0, value = 0, eligibility = 0 }, BLOCK = { count = 0, value = 0, eligibility = 0 } },
-              },
-          }
-      else
-          print(`Loading existing character model for: {characterName} (Trials: {models.characterWeights[characterName].ActionStats.totalTrials})`)
-      end
-      
-      -- Load the character-specific weights into active AI
-      models.activeModel = models.characterWeights[characterName]
-      AI.ActionStats = models.activeModel.ActionStats
-      AI.QNetworkB = models.activeModel.QNetworkB
-  end
-  
-  -- CHARACTER-SPECIFIC MODELS: Save current weights for character
-  function AI.Learning.SaveCharacterModel()
-      local models = AI.CharacterModels
-      if models.currentCharacter ~= "Unknown" and models.activeModel then
-          -- Weights are already in sync (we're pointing to the same table)
-          -- Just log for confirmation
-          print(`Character model saved for: {models.currentCharacter} (Trials: {AI.ActionStats.totalTrials})`)
       end
   end
   
