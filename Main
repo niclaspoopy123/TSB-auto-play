@@ -118,6 +118,174 @@ local TrainingMode = {
     cloneConnections = {}, -- Event connections for clone AI
 }
 
+--// ================= UTILITY FEATURES ================= //
+local UtilityConfig = {
+    -- Player Whitelist/Team Mode
+    whitelistEnabled = false,
+    whitelistedPlayers = {}, -- List of UserIds to never target
+    friendsWhitelisted = true, -- Automatically whitelist friends
+    
+    -- Server Hopping
+    serverHoppingEnabled = false,
+    minPlayersBeforeHop = 2, -- Hop if server has less than this many players
+    hopOnNegativeScore = true, -- Hop if score drops below threshold
+    scoreThresholdForHop = -50, -- Hop if score is below this
+    lastHopTime = 0,
+    hopCooldown = 300, -- 5 minutes between hops
+    
+    -- Anti-AFK
+    antiAFKEnabled = true,
+    afkActionInterval = 60, -- Send input every 60 seconds
+    lastAFKAction = 0,
+}
+
+-- Function to check if a player is whitelisted
+local function IsPlayerWhitelisted(targetPlayer)
+    if not UtilityConfig.whitelistEnabled then return false end
+    
+    -- Check explicit whitelist
+    for _, userId in ipairs(UtilityConfig.whitelistedPlayers) do
+        if targetPlayer.UserId == userId then
+            return true
+        end
+    end
+    
+    -- Check if player is a friend
+    if UtilityConfig.friendsWhitelisted and targetPlayer:IsFriendsWith(player.UserId) then
+        return true
+    end
+    
+    return false
+end
+
+-- Function to perform server hop
+local function ServerHop()
+    local now = os.clock()
+    if now - UtilityConfig.lastHopTime < UtilityConfig.hopCooldown then
+        print("Server hop on cooldown. Wait", math.ceil(UtilityConfig.hopCooldown - (now - UtilityConfig.lastHopTime)), "seconds")
+        return
+    end
+    
+    print("🔄 Attempting to hop to a new server...")
+    UtilityConfig.lastHopTime = now
+    
+    -- Use TeleportService to find and join a different server
+    local TeleportService = game:GetService("TeleportService")
+    local success, errorMsg = pcall(function()
+        -- Get current place ID
+        local placeId = game.PlaceId
+        -- Teleport to the same place (different server)
+        TeleportService:Teleport(placeId, player)
+    end)
+    
+    if not success then
+        warn("Server hop failed:", errorMsg)
+    end
+end
+
+-- Anti-AFK action
+local function PerformAntiAFKAction()
+    -- Send random movement input to prevent AFK kick
+    local randomActions = {
+        function() -- Jump
+            if character and character:FindFirstChild("Humanoid") then
+                character.Humanoid.Jump = true
+            end
+        end,
+        function() -- Small movement
+            if character and character:FindFirstChild("HumanoidRootPart") then
+                local hrp = character.HumanoidRootPart
+                local randomOffset = Vector3.new(
+                    math.random(-5, 5),
+                    0,
+                    math.random(-5, 5)
+                )
+                character.Humanoid:MoveTo(hrp.Position + randomOffset)
+            end
+        end,
+        function() -- Crouch (if available)
+            -- Some games use C for crouch, this is a generic action
+            if character then
+                task.wait(0.1)
+            end
+        end
+    }
+    
+    -- Execute a random anti-AFK action
+    local action = randomActions[math.random(#randomActions)]
+    pcall(action)
+    
+    UtilityConfig.lastAFKAction = os.clock()
+    if CONST and CONST.DEBUG_MODE then
+        print("Anti-AFK action performed")
+    end
+end
+
+--// ================= ADVANCED COMBAT TECH MACROS ================= //
+local CombatTech = {
+    -- Configuration
+    enabled = true,
+    dashTechEnabled = true, -- Animation cancel with dash
+    sideDashTechEnabled = true, -- Side dash for quick repositioning
+    
+    -- Dash Tech: Cancel end-lag of attacks with a dash
+    -- Common in TSB for faster combo execution
+    dashTech = function(currentAction)
+        if not CombatTech.dashTechEnabled then return false end
+        
+        -- Dash tech is useful after ATTACK or SPECIAL to cancel recovery frames
+        if currentAction == "ATTACK" or currentAction == "SPECIAL" then
+            if communicateEvent and math.random() < 0.3 then -- 30% chance to use tech
+                -- Perform quick dash to cancel animation
+                local techDir = math.random() > 0.5 and Enum.KeyCode.W or Enum.KeyCode.S
+                communicateEvent:FireServer({["Dash"]=techDir, ["Key"]=Enum.KeyCode.Q, ["Goal"]="KeyPress"})
+                
+                if CONST and CONST.DEBUG_MODE then
+                    print("🔧 DASH TECH used to cancel", currentAction)
+                end
+                return true
+            end
+        end
+        return false
+    end,
+    
+    -- Side Dash Tech: Quick lateral movement during combos
+    sideDashTech = function()
+        if not CombatTech.sideDashTechEnabled then return false end
+        
+        -- Use side dash during active combat for unpredictability
+        if AI.State and AI.State.comboCount > 1 and math.random() < 0.2 then -- 20% chance
+            local sideDir = math.random() > 0.5 and Enum.KeyCode.A or Enum.KeyCode.D
+            if communicateEvent then
+                communicateEvent:FireServer({["Dash"]=sideDir, ["Key"]=Enum.KeyCode.Q, ["Goal"]="KeyPress"})
+                
+                if CONST and CONST.DEBUG_MODE then
+                    print("🔧 SIDE DASH TECH used for repositioning")
+                end
+                return true
+            end
+        end
+        return false
+    end,
+    
+    -- Combo Extension: String together attacks with optimal timing
+    -- This is called after successful hits to continue pressure
+    comboExtension = function(lastAction, comboCount)
+        if not CombatTech.enabled then return nil end
+        
+        -- Suggest next action based on combo state
+        if comboCount == 1 then
+            return "ATTACK" -- Start with basic attack
+        elseif comboCount == 2 then
+            return math.random() > 0.5 and "DASH" or "ATTACK" -- Mix in dash
+        elseif comboCount >= 3 then
+            return "SPECIAL" -- Finish with special move
+        end
+        
+        return nil
+    end
+}
+
 --// ================= GUI CREATION ================= //
 local function CreateTrainingGUI(char, rp)
     -- Create ScreenGui
@@ -347,6 +515,262 @@ local function CreateTrainingGUI(char, rp)
     
     screenGui.Parent = player:WaitForChild("PlayerGui")
     return screenGui
+end
+
+--// ================= ESP & DEBUG HUD CREATION ================= //
+local function CreateESPAndDebugHUD()
+    -- Create ScreenGui for ESP and Debug HUD
+    local espGui = Instance.new("ScreenGui")
+    espGui.Name = "TSB_AI_ESP_HUD"
+    espGui.ResetOnSpawn = false
+    espGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    espGui.IgnoreGuiInset = true -- Draw on entire screen
+    
+    -- Decision HUD Frame (top-left corner)
+    local hudFrame = Instance.new("Frame")
+    hudFrame.Name = "DecisionHUD"
+    hudFrame.Size = UDim2.new(0, 350, 0, 140)
+    hudFrame.Position = UDim2.new(0.01, 0, 0.05, 0)
+    hudFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+    hudFrame.BorderSizePixel = 2
+    hudFrame.BorderColor3 = Color3.fromRGB(80, 150, 255)
+    hudFrame.BackgroundTransparency = 0.3
+    hudFrame.Parent = espGui
+    
+    -- Add corner radius
+    local hudCorner = Instance.new("UICorner")
+    hudCorner.CornerRadius = UDim.new(0, 8)
+    hudCorner.Parent = hudFrame
+    
+    -- HUD Title
+    local hudTitle = Instance.new("TextLabel")
+    hudTitle.Name = "Title"
+    hudTitle.Size = UDim2.new(1, 0, 0, 30)
+    hudTitle.Position = UDim2.new(0, 0, 0, 0)
+    hudTitle.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+    hudTitle.BorderSizePixel = 0
+    hudTitle.Text = "🤖 AI DECISION HUD"
+    hudTitle.TextColor3 = Color3.fromRGB(150, 200, 255)
+    hudTitle.TextSize = 16
+    hudTitle.Font = Enum.Font.GothamBold
+    hudTitle.TextXAlignment = Enum.TextXAlignment.Center
+    hudTitle.Parent = hudFrame
+    
+    local hudTitleCorner = Instance.new("UICorner")
+    hudTitleCorner.CornerRadius = UDim.new(0, 6)
+    hudTitleCorner.Parent = hudTitle
+    
+    -- State Label
+    local stateLabel = Instance.new("TextLabel")
+    stateLabel.Name = "StateLabel"
+    stateLabel.Size = UDim2.new(1, -10, 0, 20)
+    stateLabel.Position = UDim2.new(0, 5, 0, 35)
+    stateLabel.BackgroundTransparency = 1
+    stateLabel.Text = "State: IDLE"
+    stateLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    stateLabel.TextSize = 14
+    stateLabel.Font = Enum.Font.GothamMedium
+    stateLabel.TextXAlignment = Enum.TextXAlignment.Left
+    stateLabel.Parent = hudFrame
+    
+    -- Tactic Label
+    local tacticLabel = Instance.new("TextLabel")
+    tacticLabel.Name = "TacticLabel"
+    tacticLabel.Size = UDim2.new(1, -10, 0, 20)
+    tacticLabel.Position = UDim2.new(0, 5, 0, 55)
+    tacticLabel.BackgroundTransparency = 1
+    tacticLabel.Text = "Tactic: BaitAndPunish"
+    tacticLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
+    tacticLabel.TextSize = 14
+    tacticLabel.Font = Enum.Font.GothamMedium
+    tacticLabel.TextXAlignment = Enum.TextXAlignment.Left
+    tacticLabel.Parent = hudFrame
+    
+    -- Target Label
+    local targetLabel = Instance.new("TextLabel")
+    targetLabel.Name = "TargetLabel"
+    targetLabel.Size = UDim2.new(1, -10, 0, 20)
+    targetLabel.Position = UDim2.new(0, 5, 0, 75)
+    targetLabel.BackgroundTransparency = 1
+    targetLabel.Text = "Target: None"
+    targetLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+    targetLabel.TextSize = 14
+    targetLabel.Font = Enum.Font.GothamMedium
+    targetLabel.TextXAlignment = Enum.TextXAlignment.Left
+    targetLabel.Parent = hudFrame
+    
+    -- Confidence Label
+    local confidenceLabel = Instance.new("TextLabel")
+    confidenceLabel.Name = "ConfidenceLabel"
+    confidenceLabel.Size = UDim2.new(1, -10, 0, 20)
+    confidenceLabel.Position = UDim2.new(0, 5, 0, 95)
+    confidenceLabel.BackgroundTransparency = 1
+    confidenceLabel.Text = "Confidence: 100%"
+    confidenceLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+    confidenceLabel.TextSize = 14
+    confidenceLabel.Font = Enum.Font.GothamMedium
+    confidenceLabel.TextXAlignment = Enum.TextXAlignment.Left
+    confidenceLabel.Parent = hudFrame
+    
+    -- Action Label
+    local actionLabel = Instance.new("TextLabel")
+    actionLabel.Name = "ActionLabel"
+    actionLabel.Size = UDim2.new(1, -10, 0, 20)
+    actionLabel.Position = UDim2.new(0, 5, 0, 115)
+    actionLabel.BackgroundTransparency = 1
+    actionLabel.Text = "Action: REPOSITION"
+    actionLabel.TextColor3 = Color3.fromRGB(150, 150, 255)
+    actionLabel.TextSize = 14
+    actionLabel.Font = Enum.Font.GothamMedium
+    actionLabel.TextXAlignment = Enum.TextXAlignment.Left
+    actionLabel.Parent = hudFrame
+    
+    -- ESP Container (for enemy boxes)
+    local espContainer = Instance.new("Folder")
+    espContainer.Name = "ESPContainer"
+    espContainer.Parent = espGui
+    
+    espGui.Parent = player:WaitForChild("PlayerGui")
+    
+    -- Function to update HUD
+    local function UpdateHUD()
+        if AI.State then
+            stateLabel.Text = "State: " .. (AI.State.combatState or "IDLE")
+            tacticLabel.Text = "Tactic: " .. (AI.State.currentTactic or "N/A")
+            
+            if AI.State.currentTarget then
+                local targetName = AI.State.currentTarget.Name
+                local targetPlayer = Players:GetPlayerFromCharacter(AI.State.currentTarget)
+                if targetPlayer then
+                    targetName = targetPlayer.Name
+                end
+                targetLabel.Text = "Target: " .. targetName
+            else
+                targetLabel.Text = "Target: None"
+            end
+            
+            local confidence = AI.State.tacticConfidence or 100
+            confidenceLabel.Text = string.format("Confidence: %d%%", math.floor(confidence))
+            
+            -- Color code confidence
+            if confidence > 70 then
+                confidenceLabel.TextColor3 = Color3.fromRGB(100, 255, 100) -- Green
+            elseif confidence > 40 then
+                confidenceLabel.TextColor3 = Color3.fromRGB(255, 255, 100) -- Yellow
+            else
+                confidenceLabel.TextColor3 = Color3.fromRGB(255, 100, 100) -- Red
+            end
+            
+            actionLabel.Text = "Action: " .. (AI.State.lastAction or "IDLE")
+        end
+    end
+    
+    -- Function to create/update ESP for enemies
+    local function UpdateESP()
+        -- Clear old ESP elements
+        for _, espElement in ipairs(espContainer:GetChildren()) do
+            espElement:Destroy()
+        end
+        
+        -- Create ESP for all visible enemies
+        for _, otherPlayer in ipairs(Players:GetPlayers()) do
+            if otherPlayer ~= player and otherPlayer.Character then
+                local targetChar = otherPlayer.Character
+                local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+                local targetHumanoid = targetChar:FindFirstChildOfClass("Humanoid")
+                
+                if targetRoot and targetHumanoid and targetHumanoid.Health > 0 then
+                    -- Create BillboardGui for ESP
+                    local billboard = Instance.new("BillboardGui")
+                    billboard.Name = "ESP_" .. otherPlayer.Name
+                    billboard.Adornee = targetRoot
+                    billboard.Size = UDim2.new(4, 0, 5, 0)
+                    billboard.AlwaysOnTop = true
+                    billboard.Parent = espContainer
+                    
+                    -- Create ESP Box
+                    local espBox = Instance.new("Frame")
+                    espBox.Size = UDim2.new(1, 0, 1, 0)
+                    espBox.BackgroundTransparency = 0.7
+                    espBox.BorderSizePixel = 2
+                    espBox.Parent = billboard
+                    
+                    -- Determine threat level and color
+                    local isCurrentTarget = AI.State.currentTarget == targetChar
+                    local distance = (player.Character and player.Character:FindFirstChild("HumanoidRootPart")) and
+                                     (player.Character.HumanoidRootPart.Position - targetRoot.Position).Magnitude or 999
+                    
+                    local threatColor, threatText
+                    if isCurrentTarget then
+                        threatColor = Color3.fromRGB(255, 50, 50) -- Red for current target
+                        threatText = "🎯 ENGAGING"
+                    elseif targetHumanoid.Health < targetHumanoid.MaxHealth * 0.3 then
+                        threatColor = Color3.fromRGB(255, 150, 0) -- Orange for low HP
+                        threatText = "⚠️ LOW HP"
+                    elseif AI.State and AI.State.targetIsRagdolled then
+                        threatColor = Color3.fromRGB(100, 255, 100) -- Green for stunned
+                        threatText = "✓ STUNNED"
+                    elseif distance < 50 then
+                        threatColor = Color3.fromRGB(255, 255, 50) -- Yellow for nearby
+                        threatText = "⚡ NEARBY"
+                    else
+                        threatColor = Color3.fromRGB(150, 150, 255) -- Blue for distant
+                        threatText = "👁️ TRACKED"
+                    end
+                    
+                    espBox.BackgroundColor3 = threatColor
+                    espBox.BorderColor3 = threatColor
+                    
+                    -- Add corner radius
+                    local boxCorner = Instance.new("UICorner")
+                    boxCorner.CornerRadius = UDim.new(0, 6)
+                    boxCorner.Parent = espBox
+                    
+                    -- Threat label
+                    local threatLabel = Instance.new("TextLabel")
+                    threatLabel.Size = UDim2.new(1, 0, 0, 20)
+                    threatLabel.Position = UDim2.new(0, 0, 0, -25)
+                    threatLabel.BackgroundTransparency = 1
+                    threatLabel.Text = threatText
+                    threatLabel.TextColor3 = threatColor
+                    threatLabel.TextSize = 12
+                    threatLabel.Font = Enum.Font.GothamBold
+                    threatLabel.TextStrokeTransparency = 0.5
+                    threatLabel.Parent = billboard
+                    
+                    -- Player name label
+                    local nameLabel = Instance.new("TextLabel")
+                    nameLabel.Size = UDim2.new(1, 0, 0, 20)
+                    nameLabel.Position = UDim2.new(0, 0, 1, 5)
+                    nameLabel.BackgroundTransparency = 1
+                    nameLabel.Text = otherPlayer.Name
+                    nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+                    nameLabel.TextSize = 11
+                    nameLabel.Font = Enum.Font.Gotham
+                    nameLabel.TextStrokeTransparency = 0.5
+                    nameLabel.Parent = billboard
+                    
+                    -- Distance label
+                    local distLabel = Instance.new("TextLabel")
+                    distLabel.Size = UDim2.new(1, 0, 0, 18)
+                    distLabel.Position = UDim2.new(0, 0, 1, 25)
+                    distLabel.BackgroundTransparency = 1
+                    distLabel.Text = string.format("%.1fm", distance)
+                    distLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+                    distLabel.TextSize = 10
+                    distLabel.Font = Enum.Font.Gotham
+                    distLabel.TextStrokeTransparency = 0.5
+                    distLabel.Parent = billboard
+                end
+            end
+        end
+    end
+    
+    return {
+        GUI = espGui,
+        UpdateHUD = UpdateHUD,
+        UpdateESP = UpdateESP
+    }
 end
 
 --// ================= AI'S PERSISTENT BRAIN ================= //
@@ -1014,20 +1438,110 @@ local function initializeCombatSystem(character)
   local targetDiedConnection
 
   --// --- CHARACTER & MOVE IDENTIFICATION ---
+  -- Enhanced Character Profiles with playstyle-specific tactics
   local CHARACTER_DATA = {
-      ["The Slugger"] = { Moves = {"Homerun", "Beatdown", "Grand Slam"}, AttackRange = 35, KiteRange = 45 },
-      ["Garou"] = { Moves = {"Whirlwind Kick", "Machine Gun Blows", "Flowing Water"}, AttackRange = 30, KiteRange = 40 },
-      ["Genos"] = { Moves = {"Ignition Burst", "Jet Dive", "Blitz Shot"}, AttackRange = 50, KiteRange = 60 },
-      ["Atomic Samurai"] = { Moves = {"Quick Slice", "Atmos Cleave", "Pinpoint Cut"}, AttackRange = 40, KiteRange = 50 },
-      ["Sonic"] = { Moves = {"Flash Strike", "Explosive Shuriken"}, AttackRange = 45, KiteRange = 55 },
-      ["Flashy Flash"] = { Moves = {"Split Second Counter"}, AttackRange = 38, KiteRange = 48 },
-      ["Default"] = { Moves = {
-          "Homerun", "Beatdown", "Grand Slam", "Flash Strike", "Whirlwind Kick",
-          "Scatter", "Explosive Shuriken", "Machine Gun Blows", "Ignition Burst",
-          "Blitz Shot", "Jet Dive", "Quick Slice", "Atmos Cleave", "Pinpoint Cut",
-          "Split Second Counter", "Flowing Water", "Crushing Pull", "Windstorm Fury",
-          "Stone Coffin", "Expulsive Push"
-          }, AttackRange = 30, KiteRange = 40 }
+      ["Saitama"] = { 
+          Moves = {"Consecutive Punches", "Uppercut", "Serious Punch"}, 
+          AttackRange = 25, 
+          KiteRange = 35,
+          Playstyle = "BaitAndPunish", -- Wait for openings, land heavy hits
+          PreferredTactics = {"BaitAndPunish", "Finisher", "Defensive"},
+          TacticWeights = { BaitAndPunish = 1.5, Finisher = 1.3, Defensive = 1.0, Aggressive = 0.7 },
+          SpecialPriority = 1.4, -- Prioritize special moves (big damage)
+          DashAggressiveness = 0.6, -- Moderate dash usage
+          CounterFocus = 0.8, -- Moderate counter-attack focus
+          ComboPreference = {"FEINT", "SPECIAL", "ATTACK"}, -- Preferred combo sequence
+      },
+      ["Garou"] = { 
+          Moves = {"Whirlwind Kick", "Machine Gun Blows", "Flowing Water"}, 
+          AttackRange = 30, 
+          KiteRange = 40,
+          Playstyle = "Counter", -- Counter-attack focused
+          PreferredTactics = {"BaitAndPunish", "Aggressive", "Defensive"},
+          TacticWeights = { BaitAndPunish = 1.4, Aggressive = 1.2, Defensive = 1.1, Finisher = 0.9 },
+          SpecialPriority = 1.1,
+          DashAggressiveness = 0.8, -- High dash usage for positioning
+          CounterFocus = 1.5, -- Very high counter-attack focus
+          ComboPreference = {"BLOCK", "EVADE", "ATTACK", "SPECIAL"}, -- Counter then attack
+      },
+      ["Sonic"] = { 
+          Moves = {"Flash Strike", "Explosive Shuriken"}, 
+          AttackRange = 45, 
+          KiteRange = 55,
+          Playstyle = "HitAndRun", -- Fast hit and run tactics
+          PreferredTactics = {"Aggressive", "ExploitSeeker", "BaitAndPunish"},
+          TacticWeights = { Aggressive = 1.5, ExploitSeeker = 1.3, BaitAndPunish = 1.0, Defensive = 0.6 },
+          SpecialPriority = 1.2,
+          DashAggressiveness = 1.5, -- Very high dash usage
+          CounterFocus = 0.5, -- Low counter focus, more offense
+          ComboPreference = {"DASH", "ATTACK", "DASH", "SPECIAL"}, -- Hit and run pattern
+      },
+      ["Genos"] = { 
+          Moves = {"Ignition Burst", "Jet Dive", "Blitz Shot"}, 
+          AttackRange = 50, 
+          KiteRange = 60,
+          Playstyle = "Ranged", -- Long-range focused
+          PreferredTactics = {"Aggressive", "Finisher", "ExploitSeeker"},
+          TacticWeights = { Aggressive = 1.3, Finisher = 1.2, ExploitSeeker = 1.1, Defensive = 0.8 },
+          SpecialPriority = 1.6, -- Very high special move priority (ranged attacks)
+          DashAggressiveness = 0.4, -- Low dash, maintain distance
+          CounterFocus = 0.4, -- Low counter, prefer offense
+          ComboPreference = {"SPECIAL", "SPECIAL", "ATTACK"}, -- Spam specials
+      },
+      ["Atomic Samurai"] = { 
+          Moves = {"Quick Slice", "Atmos Cleave", "Pinpoint Cut"}, 
+          AttackRange = 40, 
+          KiteRange = 50,
+          Playstyle = "Balanced", -- Balanced approach
+          PreferredTactics = {"Aggressive", "BaitAndPunish", "Finisher"},
+          TacticWeights = { Aggressive = 1.2, BaitAndPunish = 1.2, Finisher = 1.1, Defensive = 0.9 },
+          SpecialPriority = 1.2,
+          DashAggressiveness = 0.7,
+          CounterFocus = 1.0,
+          ComboPreference = {"ATTACK", "SPECIAL", "ATTACK"}, -- Balanced combo
+      },
+      ["Flashy Flash"] = { 
+          Moves = {"Split Second Counter"}, 
+          AttackRange = 38, 
+          KiteRange = 48,
+          Playstyle = "HitAndRun", -- Fast and evasive
+          PreferredTactics = {"Aggressive", "ExploitSeeker", "BaitAndPunish"},
+          TacticWeights = { Aggressive = 1.4, ExploitSeeker = 1.2, BaitAndPunish = 1.1, Defensive = 0.7 },
+          SpecialPriority = 1.3,
+          DashAggressiveness = 1.4, -- Very high mobility
+          CounterFocus = 1.2,
+          ComboPreference = {"DASH", "ATTACK", "EVADE", "SPECIAL"},
+      },
+      ["The Slugger"] = { 
+          Moves = {"Homerun", "Beatdown", "Grand Slam"}, 
+          AttackRange = 35, 
+          KiteRange = 45,
+          Playstyle = "Aggressive", -- Pure aggression
+          PreferredTactics = {"Aggressive", "Finisher", "ExploitSeeker"},
+          TacticWeights = { Aggressive = 1.6, Finisher = 1.3, ExploitSeeker = 1.0, Defensive = 0.5 },
+          SpecialPriority = 1.3,
+          DashAggressiveness = 1.0,
+          CounterFocus = 0.6,
+          ComboPreference = {"ATTACK", "ATTACK", "SPECIAL", "ATTACK"},
+      },
+      ["Default"] = { 
+          Moves = {
+              "Homerun", "Beatdown", "Grand Slam", "Flash Strike", "Whirlwind Kick",
+              "Scatter", "Explosive Shuriken", "Machine Gun Blows", "Ignition Burst",
+              "Blitz Shot", "Jet Dive", "Quick Slice", "Atmos Cleave", "Pinpoint Cut",
+              "Split Second Counter", "Flowing Water", "Crushing Pull", "Windstorm Fury",
+              "Stone Coffin", "Expulsive Push"
+          }, 
+          AttackRange = 30, 
+          KiteRange = 40,
+          Playstyle = "Balanced",
+          PreferredTactics = {"Aggressive", "BaitAndPunish", "Defensive", "Finisher"},
+          TacticWeights = { Aggressive = 1.0, BaitAndPunish = 1.0, Defensive = 1.0, Finisher = 1.0 },
+          SpecialPriority = 1.0,
+          DashAggressiveness = 1.0,
+          CounterFocus = 1.0,
+          ComboPreference = {"ATTACK", "SPECIAL", "ATTACK"},
+      }
   }
 
   local function IdentifyCharacter()
@@ -1148,6 +1662,15 @@ local function initializeCombatSystem(character)
       CLONE_ATTACK_PROBABILITY = 0.6, -- 60% chance to use attack when in range
       CLONE_SPECIAL_PROBABILITY = 0.3, -- 30% chance to use special when in range
       CLONE_ATTACK_WINDOW = 0.5, -- Time window to keep attack flag after tool is disabled
+      -- Awakening/Ultimate constants
+      AUTO_AWAKEN_HP_THRESHOLD = 0.30, -- Auto-awaken when HP < 30%
+      AWAKEN_COOLDOWN = 5.0, -- Cooldown between awaken attempts
+      ULTIMATE_COOLDOWN = 30.0, -- Cooldown between ultimate uses
+      AWAKEN_KEY = Enum.KeyCode.G, -- Awakening key (default G)
+      ULTIMATE_KEY = Enum.KeyCode.R, -- Ultimate key (varies by character, R is common)
+      TARGET_RAGDOLL_CHECK_INTERVAL = 0.2, -- How often to check target ragdoll state
+      AWAKEN_ENERGY_COST = 0, -- Energy cost to awaken (usually free)
+      ULTIMATE_ENERGY_COST = 50, -- Energy cost for ultimate
   }
 
   --// --- STATE MANAGEMENT ---
@@ -1155,7 +1678,7 @@ local function initializeCombatSystem(character)
       AI.State = {
           currentTarget = nil, targetHumanoid = nil, targetTorso = nil,
           combatState = "IDLE", currentTactic = "BaitAndPunish",
-          lastActionTimes = { ATTACK = 0, SPECIAL = 0, EVADE = 0, FEINT = 0, DASH = 0, BLOCK = 0 },
+          lastActionTimes = { ATTACK = 0, SPECIAL = 0, EVADE = 0, FEINT = 0, DASH = 0, BLOCK = 0, AWAKEN = 0, ULTIMATE = 0 },
           strafeDirection = 1, lastStrafeChange = 0, lastAction = "IDLE",
           lastTargetScanTime = 0, currentEnergy = maxEnergy,
           lastTargetHealth = 0, myHealth = humanoid.Health,
@@ -1167,6 +1690,13 @@ local function initializeCombatSystem(character)
           tacticConfidence = 100, lastTacticChangeTime = 0,
           isTargetAttacking = false,
           lastExploitSeekerTriggerTime = 0,
+          -- Awakening/Ultimate state tracking
+          isAwakened = false, -- Whether awakening mode (G) is active
+          awakenAttempted = false, -- Track if we've tried to awaken this life
+          canUseUltimate = false, -- Whether ultimate is available
+          lastUltimateTime = 0, -- Last time ultimate was used
+          targetIsRagdolled = false, -- Target ragdoll/stunned state
+          targetIsStunned = false, -- Target stunned state
           -- New fields for enhanced learning
           epsilon = CONST.INITIAL_EPSILON,
           actionsSinceReplay = 0,
@@ -2550,17 +3080,52 @@ local function initializeCombatSystem(character)
           return AI.State.currentTactic
       end
 
-      -- Rule-based tactic selection.
+      -- Character-specific rule-based tactic selection with profile weighting
       local newTactic
-      if state.targetHealthPercent < 0.2 and state.distance < CONST.ATTACK_RANGE * 1.5 then newTactic = "Finisher"
-      elseif state.myHealthPercent > 0.75 and state.energy > (CONST.MAX_ENERGY * 0.6) then newTactic = "Aggressive"
-      elseif state.myHealthPercent < 0.35 or state.energy < (CONST.MAX_ENERGY * 0.25) then newTactic = "Defensive"
-      else newTactic = "BaitAndPunish" end
+      local baseScores = {
+          Finisher = 0,
+          Aggressive = 0,
+          Defensive = 0,
+          BaitAndPunish = 0,
+          ExploitSeeker = 0,
+      }
+      
+      -- Calculate base scores from game state
+      if state.targetHealthPercent < 0.2 and state.distance < CONST.ATTACK_RANGE * 1.5 then 
+          baseScores.Finisher = 100 
+      end
+      if state.myHealthPercent > 0.75 and state.energy > (CONST.MAX_ENERGY * 0.6) then 
+          baseScores.Aggressive = 80 
+      end
+      if state.myHealthPercent < 0.35 or state.energy < (CONST.MAX_ENERGY * 0.25) then 
+          baseScores.Defensive = 90 
+      end
+      -- BaitAndPunish is always a fallback option
+      baseScores.BaitAndPunish = 50
+      
+      -- Apply character-specific weights if profile exists
+      if characterInfo.TacticWeights then
+          for tacticName, weight in pairs(characterInfo.TacticWeights) do
+              if baseScores[tacticName] then
+                  baseScores[tacticName] = baseScores[tacticName] * weight
+              end
+          end
+      end
+      
+      -- Select tactic with highest weighted score
+      local maxScore = -math.huge
+      newTactic = "BaitAndPunish" -- Default fallback
+      for tacticName, score in pairs(baseScores) do
+          if score > maxScore then
+              maxScore = score
+              newTactic = tacticName
+          end
+      end
 
       if newTactic ~= AI.State.currentTactic then
           AI.State.lastTacticChangeTime = now
           AI.State.tacticConfidence = 100 -- Reset confidence on switch.
-          print("Tactic changed to:", newTactic)
+          print("Tactic changed to:", newTactic, "(Character:", AI.IdentifiedCharacter, "Playstyle:", characterInfo.Playstyle or "Unknown", ")")
       end
       return newTactic
   end
@@ -2879,6 +3444,33 @@ local function initializeCombatSystem(character)
                       modifier *= 1.3
                   end
               end
+              
+              -- Character-specific action modifiers (apply profile bonuses)
+              if characterInfo then
+                  -- Special move priority adjustment based on character
+                  if action == "SPECIAL" and characterInfo.SpecialPriority then
+                      modifier *= characterInfo.SpecialPriority
+                  end
+                  
+                  -- Dash usage adjustment based on character playstyle
+                  if action == "DASH" and characterInfo.DashAggressiveness then
+                      modifier *= characterInfo.DashAggressiveness
+                  end
+                  
+                  -- Counter-attack focus (BLOCK and EVADE)
+                  if (action == "BLOCK" or action == "EVADE") and characterInfo.CounterFocus then
+                      modifier *= characterInfo.CounterFocus
+                  end
+                  
+                  -- Apply combo preference if we have one
+                  if characterInfo.ComboPreference and AI.State.comboCount > 0 then
+                      local comboIndex = (AI.State.comboCount % #characterInfo.ComboPreference) + 1
+                      local preferredAction = characterInfo.ComboPreference[comboIndex]
+                      if action == preferredAction then
+                          modifier *= 1.4 -- Bonus for following character's combo pattern
+                      end
+                  end
+              end
 
               table.insert(actionScores, { 
                   action = action, 
@@ -2978,6 +3570,11 @@ local function initializeCombatSystem(character)
           communicateEvent:FireServer({["Mobile"]=true, ["Goal"]="LeftClick"})
           AI.State.lastActionTimes.ATTACK = now
           AI.State.punishWindowEndTime = 0
+          
+          -- Try to use dash tech to cancel attack animation
+          task.delay(0.15, function() -- Small delay to let attack register
+              CombatTech.dashTech("ATTACK")
+          end)
       elseif action == "SPECIAL" then
           if #AI.AvailableMoves > 0 then
               local moveName = AI.AvailableMoves[math.random(#AI.AvailableMoves)]
@@ -2986,6 +3583,11 @@ local function initializeCombatSystem(character)
                   communicateEvent:FireServer({["Tool"] = tool, ["Goal"] = "Console Move"})
                   AI.State.lastActionTimes.SPECIAL = now
                   AI.State.punishWindowEndTime = 0
+                  
+                  -- Try to use dash tech to cancel special animation
+                  task.delay(0.2, function() -- Slightly longer delay for special moves
+                      CombatTech.dashTech("SPECIAL")
+                  end)
               end
           end
       elseif action == "EVADE" then
@@ -3112,6 +3714,13 @@ local function initializeCombatSystem(character)
   local function GetTargetScore(targetCharacter)
       -- Fast validity checks with early returns
       if not targetCharacter or not targetCharacter.Parent then return 0 end
+      
+      -- Check whitelist before scoring
+      local targetPlayer = Players:GetPlayerFromCharacter(targetCharacter)
+      if targetPlayer and IsPlayerWhitelisted(targetPlayer) then
+          return 0 -- Skip whitelisted players
+      end
+      
       local root = targetCharacter:FindFirstChild("HumanoidRootPart")
       if not root then return 0 end
       
@@ -3680,6 +4289,36 @@ local function initializeCombatSystem(character)
       end
 
       RunGlitchScanner() -- Run the scanner every state update.
+      
+      -- Utility Features Update
+      -- Anti-AFK check
+      if UtilityConfig.antiAFKEnabled and (now - UtilityConfig.lastAFKAction) > UtilityConfig.afkActionInterval then
+          PerformAntiAFKAction()
+      end
+      
+      -- Server Hopping checks
+      if UtilityConfig.serverHoppingEnabled then
+          local shouldHop = false
+          local hopReason = ""
+          
+          -- Check 1: Too few players
+          local playerCount = #Players:GetPlayers()
+          if playerCount < UtilityConfig.minPlayersBeforeHop then
+              shouldHop = true
+              hopReason = "Too few players (" .. playerCount .. ")"
+          end
+          
+          -- Check 2: Negative score threshold
+          if UtilityConfig.hopOnNegativeScore and AI.Score < UtilityConfig.scoreThresholdForHop then
+              shouldHop = true
+              hopReason = "Score too low (" .. AI.Score .. ")"
+          end
+          
+          if shouldHop then
+              print("Server hop triggered:", hopReason)
+              ServerHop()
+          end
+      end
   end
 
   local function UpdateLearningAndRewards(now)
@@ -3781,6 +4420,14 @@ local function initializeCombatSystem(character)
                   local exponentialBonus = (AI.State.comboCount ^ 1.20) * 0.05
                   local comboMultiplier = 1.0 + linearBonus + exponentialBonus
                   reward *= math.min(comboMultiplier, 3.0) -- Higher cap at 3.0x for better high-combo rewards
+                  
+                  -- Try side dash tech during combos for better positioning
+                  if AI.State.comboCount >= 2 then
+                      task.delay(0.1, function()
+                          CombatTech.sideDashTech()
+                      end)
+                  end
+                  
                   if CONST.DEBUG_COMBOS then
                       print(`Combo x${AI.State.comboCount}! Damage: ${damageDealt}, Multiplier: ${string.format("%.2f", comboMultiplier)}x`)
                   end
@@ -3959,8 +4606,90 @@ local function initializeCombatSystem(character)
           inRange = distance <= CONST.ATTACK_RANGE,
           isTargetAttacking = AI.State.isTargetAttacking,
       }
+      
+      -- Check target ragdoll/stunned state (for ultimate timing)
+      if AI.State.targetHumanoid then
+          local targetState = AI.State.targetHumanoid:GetState()
+          AI.State.targetIsRagdolled = targetState == Enum.HumanoidStateType.Ragdoll or 
+                                       targetState == Enum.HumanoidStateType.FallingDown or
+                                       targetState == Enum.HumanoidStateType.Flying
+          AI.State.targetIsStunned = AI.State.targetIsRagdolled or 
+                                     (AI.State.targetTorso.AssemblyLinearVelocity and 
+                                      AI.State.targetTorso.AssemblyLinearVelocity.Magnitude < 5 and
+                                      not AI.State.isTargetAttacking)
+      end
+      
+      -- Priority: Auto-Awakening Logic (if not already awakened)
+      if not AI.State.isAwakened and not AI.State.awakenAttempted then
+          local shouldAwaken = false
+          local awakenReason = ""
+          
+          -- Condition 1: Critical HP (< 30%)
+          if myHealthPercent < CONST.AUTO_AWAKEN_HP_THRESHOLD then
+              shouldAwaken = true
+              awakenReason = "Critical HP"
+          end
+          
+          -- Condition 2: Awakening bar full AND opponent stunned/ragdolled
+          -- Note: We can't directly check awakening bar, so we assume it's available after taking some damage
+          -- In a real implementation, you'd check for a GUI element or character value
+          if myHealthPercent < 0.7 and AI.State.targetIsStunned then
+              shouldAwaken = true
+              awakenReason = "Opponent Stunned + Bar Ready"
+          end
+          
+          -- Execute awakening if conditions met and cooldown passed
+          if shouldAwaken and (now - AI.State.lastActionTimes.AWAKEN) > CONST.AWAKEN_COOLDOWN then
+              if communicateEvent then
+                  communicateEvent:FireServer({["Goal"]="KeyPress", ["Key"]=CONST.AWAKEN_KEY})
+                  task.wait(0.1) -- Brief wait for activation
+                  communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=CONST.AWAKEN_KEY})
+              end
+              AI.State.lastActionTimes.AWAKEN = now
+              AI.State.awakenAttempted = true
+              AI.State.isAwakened = true -- Assume success (can be refined with actual checks)
+              print("🔥 AUTO-AWAKENED! Reason:", awakenReason)
+          end
+      end
+      
+      -- Priority: Ultimate Finisher Logic (only when target is vulnerable)
+      if AI.State.isAwakened and (now - AI.State.lastUltimateTime) > CONST.ULTIMATE_COOLDOWN then
+          local shouldUseUltimate = false
+          local ultimateReason = ""
+          
+          -- Condition 1: Target is ragdolled (guaranteed hit)
+          if AI.State.targetIsRagdolled and distance < CONST.ATTACK_RANGE * 1.5 then
+              shouldUseUltimate = true
+              ultimateReason = "Target Ragdolled"
+          end
+          
+          -- Condition 2: Target is stunned/low mobility
+          if AI.State.targetIsStunned and distance < CONST.ATTACK_RANGE and state.energy >= CONST.ULTIMATE_ENERGY_COST then
+              shouldUseUltimate = true
+              ultimateReason = "Target Stunned"
+          end
+          
+          -- Condition 3: Target very low HP and in range (finisher)
+          if targetHealthPercent < 0.15 and distance < CONST.ATTACK_RANGE * 1.2 then
+              shouldUseUltimate = true
+              ultimateReason = "Finisher (Low HP)"
+          end
+          
+          -- Execute ultimate if conditions met
+          if shouldUseUltimate and state.energy >= CONST.ULTIMATE_ENERGY_COST then
+              if communicateEvent then
+                  communicateEvent:FireServer({["Goal"]="KeyPress", ["Key"]=CONST.ULTIMATE_KEY})
+                  task.wait(0.1) -- Brief wait for activation
+                  communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=CONST.ULTIMATE_KEY})
+              end
+              AI.State.lastUltimateTime = now
+              AI.State.currentEnergy -= CONST.ULTIMATE_ENERGY_COST
+              print("💥 ULTIMATE USED! Reason:", ultimateReason)
+              return -- Skip normal action this frame
+          end
+      end
 
-      -- Single-pass decision pipeline
+      -- Single-pass decision pipeline (normal actions)
       AI.State.currentTactic = AI.Evaluation.ChooseTactic(state)
       local bestAction = AI.Evaluation.FindBestActionByScore(state, AI.State.currentTactic)
       AI.Actions.Execute(bestAction, state)
@@ -4087,6 +4816,29 @@ local function initializeCombatSystem(character)
   
   -- Create Training GUI
   CreateTrainingGUI(character, rootPart)
+  
+  -- Create ESP & Debug HUD
+  local espHUD = CreateESPAndDebugHUD()
+  
+  -- Add HUD and ESP update to heartbeat loop
+  table.insert(connections, RunService.Heartbeat:Connect(function()
+      -- Update HUD every frame
+      pcall(function()
+          espHUD.UpdateHUD()
+      end)
+  end))
+  
+  -- Add ESP update on a slower interval (for performance)
+  local lastESPUpdate = 0
+  table.insert(connections, RunService.Heartbeat:Connect(function()
+      local now = os.clock()
+      if now - lastESPUpdate > 0.1 then -- Update ESP 10 times per second
+          pcall(function()
+              espHUD.UpdateESP()
+          end)
+          lastESPUpdate = now
+      end
+  end))
 end
 
 --// ================= SCRIPT ENTRY POINT ================= //
