@@ -1014,20 +1014,110 @@ local function initializeCombatSystem(character)
   local targetDiedConnection
 
   --// --- CHARACTER & MOVE IDENTIFICATION ---
+  -- Enhanced Character Profiles with playstyle-specific tactics
   local CHARACTER_DATA = {
-      ["The Slugger"] = { Moves = {"Homerun", "Beatdown", "Grand Slam"}, AttackRange = 35, KiteRange = 45 },
-      ["Garou"] = { Moves = {"Whirlwind Kick", "Machine Gun Blows", "Flowing Water"}, AttackRange = 30, KiteRange = 40 },
-      ["Genos"] = { Moves = {"Ignition Burst", "Jet Dive", "Blitz Shot"}, AttackRange = 50, KiteRange = 60 },
-      ["Atomic Samurai"] = { Moves = {"Quick Slice", "Atmos Cleave", "Pinpoint Cut"}, AttackRange = 40, KiteRange = 50 },
-      ["Sonic"] = { Moves = {"Flash Strike", "Explosive Shuriken"}, AttackRange = 45, KiteRange = 55 },
-      ["Flashy Flash"] = { Moves = {"Split Second Counter"}, AttackRange = 38, KiteRange = 48 },
-      ["Default"] = { Moves = {
-          "Homerun", "Beatdown", "Grand Slam", "Flash Strike", "Whirlwind Kick",
-          "Scatter", "Explosive Shuriken", "Machine Gun Blows", "Ignition Burst",
-          "Blitz Shot", "Jet Dive", "Quick Slice", "Atmos Cleave", "Pinpoint Cut",
-          "Split Second Counter", "Flowing Water", "Crushing Pull", "Windstorm Fury",
-          "Stone Coffin", "Expulsive Push"
-          }, AttackRange = 30, KiteRange = 40 }
+      ["Saitama"] = { 
+          Moves = {"Consecutive Punches", "Uppercut", "Serious Punch"}, 
+          AttackRange = 25, 
+          KiteRange = 35,
+          Playstyle = "BaitAndPunish", -- Wait for openings, land heavy hits
+          PreferredTactics = {"BaitAndPunish", "Finisher", "Defensive"},
+          TacticWeights = { BaitAndPunish = 1.5, Finisher = 1.3, Defensive = 1.0, Aggressive = 0.7 },
+          SpecialPriority = 1.4, -- Prioritize special moves (big damage)
+          DashAggressiveness = 0.6, -- Moderate dash usage
+          CounterFocus = 0.8, -- Moderate counter-attack focus
+          ComboPreference = {"FEINT", "SPECIAL", "ATTACK"}, -- Preferred combo sequence
+      },
+      ["Garou"] = { 
+          Moves = {"Whirlwind Kick", "Machine Gun Blows", "Flowing Water"}, 
+          AttackRange = 30, 
+          KiteRange = 40,
+          Playstyle = "Counter", -- Counter-attack focused
+          PreferredTactics = {"BaitAndPunish", "Aggressive", "Defensive"},
+          TacticWeights = { BaitAndPunish = 1.4, Aggressive = 1.2, Defensive = 1.1, Finisher = 0.9 },
+          SpecialPriority = 1.1,
+          DashAggressiveness = 0.8, -- High dash usage for positioning
+          CounterFocus = 1.5, -- Very high counter-attack focus
+          ComboPreference = {"BLOCK", "EVADE", "ATTACK", "SPECIAL"}, -- Counter then attack
+      },
+      ["Sonic"] = { 
+          Moves = {"Flash Strike", "Explosive Shuriken"}, 
+          AttackRange = 45, 
+          KiteRange = 55,
+          Playstyle = "HitAndRun", -- Fast hit and run tactics
+          PreferredTactics = {"Aggressive", "ExploitSeeker", "BaitAndPunish"},
+          TacticWeights = { Aggressive = 1.5, ExploitSeeker = 1.3, BaitAndPunish = 1.0, Defensive = 0.6 },
+          SpecialPriority = 1.2,
+          DashAggressiveness = 1.5, -- Very high dash usage
+          CounterFocus = 0.5, -- Low counter focus, more offense
+          ComboPreference = {"DASH", "ATTACK", "DASH", "SPECIAL"}, -- Hit and run pattern
+      },
+      ["Genos"] = { 
+          Moves = {"Ignition Burst", "Jet Dive", "Blitz Shot"}, 
+          AttackRange = 50, 
+          KiteRange = 60,
+          Playstyle = "Ranged", -- Long-range focused
+          PreferredTactics = {"Aggressive", "Finisher", "ExploitSeeker"},
+          TacticWeights = { Aggressive = 1.3, Finisher = 1.2, ExploitSeeker = 1.1, Defensive = 0.8 },
+          SpecialPriority = 1.6, -- Very high special move priority (ranged attacks)
+          DashAggressiveness = 0.4, -- Low dash, maintain distance
+          CounterFocus = 0.4, -- Low counter, prefer offense
+          ComboPreference = {"SPECIAL", "SPECIAL", "ATTACK"}, -- Spam specials
+      },
+      ["Atomic Samurai"] = { 
+          Moves = {"Quick Slice", "Atmos Cleave", "Pinpoint Cut"}, 
+          AttackRange = 40, 
+          KiteRange = 50,
+          Playstyle = "Balanced", -- Balanced approach
+          PreferredTactics = {"Aggressive", "BaitAndPunish", "Finisher"},
+          TacticWeights = { Aggressive = 1.2, BaitAndPunish = 1.2, Finisher = 1.1, Defensive = 0.9 },
+          SpecialPriority = 1.2,
+          DashAggressiveness = 0.7,
+          CounterFocus = 1.0,
+          ComboPreference = {"ATTACK", "SPECIAL", "ATTACK"}, -- Balanced combo
+      },
+      ["Flashy Flash"] = { 
+          Moves = {"Split Second Counter"}, 
+          AttackRange = 38, 
+          KiteRange = 48,
+          Playstyle = "HitAndRun", -- Fast and evasive
+          PreferredTactics = {"Aggressive", "ExploitSeeker", "BaitAndPunish"},
+          TacticWeights = { Aggressive = 1.4, ExploitSeeker = 1.2, BaitAndPunish = 1.1, Defensive = 0.7 },
+          SpecialPriority = 1.3,
+          DashAggressiveness = 1.4, -- Very high mobility
+          CounterFocus = 1.2,
+          ComboPreference = {"DASH", "ATTACK", "EVADE", "SPECIAL"},
+      },
+      ["The Slugger"] = { 
+          Moves = {"Homerun", "Beatdown", "Grand Slam"}, 
+          AttackRange = 35, 
+          KiteRange = 45,
+          Playstyle = "Aggressive", -- Pure aggression
+          PreferredTactics = {"Aggressive", "Finisher", "ExploitSeeker"},
+          TacticWeights = { Aggressive = 1.6, Finisher = 1.3, ExploitSeeker = 1.0, Defensive = 0.5 },
+          SpecialPriority = 1.3,
+          DashAggressiveness = 1.0,
+          CounterFocus = 0.6,
+          ComboPreference = {"ATTACK", "ATTACK", "SPECIAL", "ATTACK"},
+      },
+      ["Default"] = { 
+          Moves = {
+              "Homerun", "Beatdown", "Grand Slam", "Flash Strike", "Whirlwind Kick",
+              "Scatter", "Explosive Shuriken", "Machine Gun Blows", "Ignition Burst",
+              "Blitz Shot", "Jet Dive", "Quick Slice", "Atmos Cleave", "Pinpoint Cut",
+              "Split Second Counter", "Flowing Water", "Crushing Pull", "Windstorm Fury",
+              "Stone Coffin", "Expulsive Push"
+          }, 
+          AttackRange = 30, 
+          KiteRange = 40,
+          Playstyle = "Balanced",
+          PreferredTactics = {"Aggressive", "BaitAndPunish", "Defensive", "Finisher"},
+          TacticWeights = { Aggressive = 1.0, BaitAndPunish = 1.0, Defensive = 1.0, Finisher = 1.0 },
+          SpecialPriority = 1.0,
+          DashAggressiveness = 1.0,
+          CounterFocus = 1.0,
+          ComboPreference = {"ATTACK", "SPECIAL", "ATTACK"},
+      }
   }
 
   local function IdentifyCharacter()
@@ -2550,17 +2640,52 @@ local function initializeCombatSystem(character)
           return AI.State.currentTactic
       end
 
-      -- Rule-based tactic selection.
+      -- Character-specific rule-based tactic selection with profile weighting
       local newTactic
-      if state.targetHealthPercent < 0.2 and state.distance < CONST.ATTACK_RANGE * 1.5 then newTactic = "Finisher"
-      elseif state.myHealthPercent > 0.75 and state.energy > (CONST.MAX_ENERGY * 0.6) then newTactic = "Aggressive"
-      elseif state.myHealthPercent < 0.35 or state.energy < (CONST.MAX_ENERGY * 0.25) then newTactic = "Defensive"
-      else newTactic = "BaitAndPunish" end
+      local baseScores = {
+          Finisher = 0,
+          Aggressive = 0,
+          Defensive = 0,
+          BaitAndPunish = 0,
+          ExploitSeeker = 0,
+      }
+      
+      -- Calculate base scores from game state
+      if state.targetHealthPercent < 0.2 and state.distance < CONST.ATTACK_RANGE * 1.5 then 
+          baseScores.Finisher = 100 
+      end
+      if state.myHealthPercent > 0.75 and state.energy > (CONST.MAX_ENERGY * 0.6) then 
+          baseScores.Aggressive = 80 
+      end
+      if state.myHealthPercent < 0.35 or state.energy < (CONST.MAX_ENERGY * 0.25) then 
+          baseScores.Defensive = 90 
+      end
+      -- BaitAndPunish is always a fallback option
+      baseScores.BaitAndPunish = 50
+      
+      -- Apply character-specific weights if profile exists
+      if characterInfo.TacticWeights then
+          for tacticName, weight in pairs(characterInfo.TacticWeights) do
+              if baseScores[tacticName] then
+                  baseScores[tacticName] = baseScores[tacticName] * weight
+              end
+          end
+      end
+      
+      -- Select tactic with highest weighted score
+      local maxScore = -math.huge
+      newTactic = "BaitAndPunish" -- Default fallback
+      for tacticName, score in pairs(baseScores) do
+          if score > maxScore then
+              maxScore = score
+              newTactic = tacticName
+          end
+      end
 
       if newTactic ~= AI.State.currentTactic then
           AI.State.lastTacticChangeTime = now
           AI.State.tacticConfidence = 100 -- Reset confidence on switch.
-          print("Tactic changed to:", newTactic)
+          print("Tactic changed to:", newTactic, "(Character:", AI.IdentifiedCharacter, "Playstyle:", characterInfo.Playstyle or "Unknown", ")")
       end
       return newTactic
   end
@@ -2877,6 +3002,33 @@ local function initializeCombatSystem(character)
                       modifier *= 1.55
                   elseif action == "DASH" or action == "FEINT" then
                       modifier *= 1.3
+                  end
+              end
+              
+              -- Character-specific action modifiers (apply profile bonuses)
+              if characterInfo then
+                  -- Special move priority adjustment based on character
+                  if action == "SPECIAL" and characterInfo.SpecialPriority then
+                      modifier *= characterInfo.SpecialPriority
+                  end
+                  
+                  -- Dash usage adjustment based on character playstyle
+                  if action == "DASH" and characterInfo.DashAggressiveness then
+                      modifier *= characterInfo.DashAggressiveness
+                  end
+                  
+                  -- Counter-attack focus (BLOCK and EVADE)
+                  if (action == "BLOCK" or action == "EVADE") and characterInfo.CounterFocus then
+                      modifier *= characterInfo.CounterFocus
+                  end
+                  
+                  -- Apply combo preference if we have one
+                  if characterInfo.ComboPreference and AI.State.comboCount > 0 then
+                      local comboIndex = (AI.State.comboCount % #characterInfo.ComboPreference) + 1
+                      local preferredAction = characterInfo.ComboPreference[comboIndex]
+                      if action == preferredAction then
+                          modifier *= 1.4 -- Bonus for following character's combo pattern
+                      end
                   end
               end
 
