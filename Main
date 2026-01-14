@@ -221,6 +221,71 @@ local function PerformAntiAFKAction()
     end
 end
 
+--// ================= ADVANCED COMBAT TECH MACROS ================= //
+local CombatTech = {
+    -- Configuration
+    enabled = true,
+    dashTechEnabled = true, -- Animation cancel with dash
+    sideDashTechEnabled = true, -- Side dash for quick repositioning
+    
+    -- Dash Tech: Cancel end-lag of attacks with a dash
+    -- Common in TSB for faster combo execution
+    dashTech = function(currentAction)
+        if not CombatTech.dashTechEnabled then return false end
+        
+        -- Dash tech is useful after ATTACK or SPECIAL to cancel recovery frames
+        if currentAction == "ATTACK" or currentAction == "SPECIAL" then
+            if communicateEvent and math.random() < 0.3 then -- 30% chance to use tech
+                -- Perform quick dash to cancel animation
+                local techDir = math.random() > 0.5 and Enum.KeyCode.W or Enum.KeyCode.S
+                communicateEvent:FireServer({["Dash"]=techDir, ["Key"]=Enum.KeyCode.Q, ["Goal"]="KeyPress"})
+                
+                if CONST and CONST.DEBUG_MODE then
+                    print("🔧 DASH TECH used to cancel", currentAction)
+                end
+                return true
+            end
+        end
+        return false
+    end,
+    
+    -- Side Dash Tech: Quick lateral movement during combos
+    sideDashTech = function()
+        if not CombatTech.sideDashTechEnabled then return false end
+        
+        -- Use side dash during active combat for unpredictability
+        if AI.State and AI.State.comboCount > 1 and math.random() < 0.2 then -- 20% chance
+            local sideDir = math.random() > 0.5 and Enum.KeyCode.A or Enum.KeyCode.D
+            if communicateEvent then
+                communicateEvent:FireServer({["Dash"]=sideDir, ["Key"]=Enum.KeyCode.Q, ["Goal"]="KeyPress"})
+                
+                if CONST and CONST.DEBUG_MODE then
+                    print("🔧 SIDE DASH TECH used for repositioning")
+                end
+                return true
+            end
+        end
+        return false
+    end,
+    
+    -- Combo Extension: String together attacks with optimal timing
+    -- This is called after successful hits to continue pressure
+    comboExtension = function(lastAction, comboCount)
+        if not CombatTech.enabled then return nil end
+        
+        -- Suggest next action based on combo state
+        if comboCount == 1 then
+            return "ATTACK" -- Start with basic attack
+        elseif comboCount == 2 then
+            return math.random() > 0.5 and "DASH" or "ATTACK" -- Mix in dash
+        elseif comboCount >= 3 then
+            return "SPECIAL" -- Finish with special move
+        end
+        
+        return nil
+    end
+}
+
 --// ================= GUI CREATION ================= //
 local function CreateTrainingGUI(char, rp)
     -- Create ScreenGui
@@ -3505,6 +3570,11 @@ local function initializeCombatSystem(character)
           communicateEvent:FireServer({["Mobile"]=true, ["Goal"]="LeftClick"})
           AI.State.lastActionTimes.ATTACK = now
           AI.State.punishWindowEndTime = 0
+          
+          -- Try to use dash tech to cancel attack animation
+          task.delay(0.15, function() -- Small delay to let attack register
+              CombatTech.dashTech("ATTACK")
+          end)
       elseif action == "SPECIAL" then
           if #AI.AvailableMoves > 0 then
               local moveName = AI.AvailableMoves[math.random(#AI.AvailableMoves)]
@@ -3513,6 +3583,11 @@ local function initializeCombatSystem(character)
                   communicateEvent:FireServer({["Tool"] = tool, ["Goal"] = "Console Move"})
                   AI.State.lastActionTimes.SPECIAL = now
                   AI.State.punishWindowEndTime = 0
+                  
+                  -- Try to use dash tech to cancel special animation
+                  task.delay(0.2, function() -- Slightly longer delay for special moves
+                      CombatTech.dashTech("SPECIAL")
+                  end)
               end
           end
       elseif action == "EVADE" then
@@ -4345,6 +4420,14 @@ local function initializeCombatSystem(character)
                   local exponentialBonus = (AI.State.comboCount ^ 1.20) * 0.05
                   local comboMultiplier = 1.0 + linearBonus + exponentialBonus
                   reward *= math.min(comboMultiplier, 3.0) -- Higher cap at 3.0x for better high-combo rewards
+                  
+                  -- Try side dash tech during combos for better positioning
+                  if AI.State.comboCount >= 2 then
+                      task.delay(0.1, function()
+                          CombatTech.sideDashTech()
+                      end)
+                  end
+                  
                   if CONST.DEBUG_COMBOS then
                       print(`Combo x${AI.State.comboCount}! Damage: ${damageDealt}, Multiplier: ${string.format("%.2f", comboMultiplier)}x`)
                   end
