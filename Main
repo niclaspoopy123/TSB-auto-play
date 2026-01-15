@@ -645,7 +645,13 @@ local function CreateESPAndDebugHUD()
     local function UpdateHUD()
         if AI.State then
             stateLabel.Text = "State: " .. (AI.State.combatState or "IDLE")
-            tacticLabel.Text = "Tactic: " .. (AI.State.currentTactic or "N/A")
+            
+            -- Show tactic with win probability if available
+            local tacticText = "Tactic: " .. (AI.State.currentTactic or "N/A")
+            if AI.WinProbabilityEstimator.enabled and AI.State.lastWinProbability then
+                tacticText = tacticText .. string.format(" (Win: %.0f%%)", AI.State.lastWinProbability * 100)
+            end
+            tacticLabel.Text = tacticText
             
             if AI.State.currentTarget then
                 local targetName = AI.State.currentTarget.Name
@@ -1025,6 +1031,41 @@ local AI = {
       outputWeights = {},
       -- Cached attention scores
       attentionScores = {},
+  },
+  --// WIN PROBABILITY ESTIMATOR: Meta-controller for dynamic tactic selection
+  WinProbabilityEstimator = {
+      enabled = true,
+      -- 3-layer feedforward neural network
+      network = {
+          layer1 = { weights = {}, biases = {}, size = 16, activations = {}, gradients = {} }, -- Input: 10 features -> Hidden: 16
+          layer2 = { weights = {}, biases = {}, size = 12, activations = {}, gradients = {} }, -- Hidden: 16 -> Hidden: 12
+          layer3 = { weights = {}, biases = {}, size = 1, activations = {}, gradients = {} },  -- Hidden: 12 -> Output: 1 (win probability)
+      },
+      inputSize = 10, -- [MyHP, EnemyHP, MyCooldowns, EnemyCooldowns, Distance, TimeRemaining, Energy, ComboCount, DamageDealt, DamageTaken]
+      learningRate = 0.002,
+      -- Match history for training
+      matchHistory = {},
+      maxMatchHistory = 100,
+      -- Thresholds for tactic switching
+      defensiveThreshold = 0.4, -- < 0.4 = switch to Defensive/Turtle
+      aggressiveThreshold = 0.8, -- > 0.8 = switch to Aggressive/Finisher
+      -- Performance tracking
+      predictionAccuracy = 0,
+      totalPredictions = 0,
+      correctPredictions = 0,
+  },
+  --// SELF-PLAY SYSTEM: Shadow boxing for AlphaGo-style training
+  SelfPlaySystem = {
+      enabled = false, -- Can be enabled via GUI or config
+      bestWeightsVersion = 0,
+      currentVersion = 0,
+      bestWeights = nil, -- Stored best weights
+      winRateThreshold = 0.60, -- Need >60% win rate to become new best
+      -- Match tracking for self-play
+      matchesVsBest = 0,
+      winsVsBest = 0,
+      lastSaveTime = 0,
+      saveInterval = 300, -- Save best weights every 5 minutes if improved
   },
   Evaluation = {},
   Actions = {},
@@ -1433,6 +1474,12 @@ local function InitializeDeepNetworks()
         AI.LSTMOpponentModel.hiddenState[i] = 0
     end
     
+    -- Initialize Win Probability Estimator network
+    if AI.WinProbabilityEstimator.enabled then
+        InitializeNetwork(AI.WinProbabilityEstimator.network, AI.WinProbabilityEstimator.inputSize)
+        print("Win Probability Estimator initialized")
+    end
+    
     -- Initialize state normalization
     if AI.StateNormalization.enabled then
         for i = 1, AI.DeepNetwork.inputSize do
@@ -1816,6 +1863,9 @@ local function initializeCombatSystem(character)
           -- Adaptive learning rate
           currentLearningRate = CONST.LEARNING_RATE_ALPHA,
           recentPerformance = {},
+          -- Win Probability tracking
+          matchStartTime = os.clock(),
+          lastWinProbability = 0.5,
       }
       print("AI State reset. Learned statistics and score have been preserved.")
   end
@@ -2466,6 +2516,142 @@ local function initializeCombatSystem(character)
                   print("📊 Pattern learned: In state " .. stateKey .. ", " .. bestAction .. " is effective (" .. bestActionCount .. " successes)")
               end
           end
+      end
+  end
+
+  --// --- WIN PROBABILITY ESTIMATOR FUNCTIONS ---
+  
+  -- Forward pass through Win Probability Estimator network
+  function AI.DeepLearning.PredictWinProbability(state)
+      if not AI.WinProbabilityEstimator.enabled then return 0.5 end
+      
+      -- Encode input features: [MyHP, EnemyHP, MyCooldowns, EnemyCooldowns, Distance, TimeRemaining, Energy, ComboCount, DamageDealt, DamageTaken]
+      local inputFeatures = {
+          state.myHealthPercent or 0.5,
+          state.targetHealthPercent or 0.5,
+          -- Cooldown factors (1.0 = ready, 0.0 = on cooldown)
+          (state.attackReady and 1.0 or 0.0) or 0.8,
+          (state.specialReady and 1.0 or 0.0) or 0.7,
+          (state.evadeReady and 1.0 or 0.0) or 0.9,
+          (state.enemyAttacking and 1.0 or 0.0) or 0.5,
+          -- Distance (normalized to 0-1 range, assuming max 200)
+          math.min(1.0, (state.distance or 100) / 200),
+          -- Time remaining (normalized, assuming 300 second matches)
+          math.min(1.0, (state.timeRemaining or 150) / 300),
+          -- Energy (normalized to 0-1)
+          (state.energy or 250) / 500,
+          -- Combo count (normalized, max expected 10)
+          math.min(1.0, (state.comboCount or 0) / 10),
+      }
+      
+      -- Forward pass through 3-layer network
+      local net = AI.WinProbabilityEstimator.network
+      local hidden1 = ForwardLayer(net.layer1, inputFeatures, LeakyReLU)
+      local hidden2 = ForwardLayer(net.layer2, hidden1, LeakyReLU)
+      local output = ForwardLayer(net.layer3, hidden2, Sigmoid) -- Output in range [0, 1]
+      
+      -- Return win probability
+      return output[1]
+  end
+  
+  -- Train Win Probability Estimator with match result
+  function AI.DeepLearning.TrainWinProbability(matchData, wonMatch)
+      if not AI.WinProbabilityEstimator.enabled then return end
+      
+      local net = AI.WinProbabilityEstimator.network
+      local lr = AI.WinProbabilityEstimator.learningRate
+      
+      -- Target: 1.0 for win, 0.0 for loss
+      local target = wonMatch and 1.0 or 0.0
+      
+      -- Forward pass
+      local inputFeatures = {
+          matchData.myHealthPercent or 0.5,
+          matchData.targetHealthPercent or 0.5,
+          (matchData.attackReady and 1.0 or 0.0) or 0.8,
+          (matchData.specialReady and 1.0 or 0.0) or 0.7,
+          (matchData.evadeReady and 1.0 or 0.0) or 0.9,
+          (matchData.enemyAttacking and 1.0 or 0.0) or 0.5,
+          math.min(1.0, (matchData.distance or 100) / 200),
+          math.min(1.0, (matchData.timeRemaining or 150) / 300),
+          (matchData.energy or 250) / 500,
+          math.min(1.0, (matchData.comboCount or 0) / 10),
+      }
+      
+      local hidden1 = ForwardLayer(net.layer1, inputFeatures, LeakyReLU)
+      local hidden2 = ForwardLayer(net.layer2, hidden1, LeakyReLU)
+      local output = ForwardLayer(net.layer3, hidden2, Sigmoid)
+      
+      local prediction = output[1]
+      
+      -- Calculate loss (binary cross-entropy)
+      local error = target - prediction
+      
+      -- Backward pass
+      local outputGradient = {error * prediction * (1 - prediction)} -- Sigmoid derivative
+      local grad2 = BackwardLayer(net.layer3, net.layer2, outputGradient, hidden2, nil)
+      local grad1 = BackwardLayer(net.layer2, net.layer1, grad2, hidden1, LeakyReLU)
+      BackwardLayer(net.layer1, nil, grad1, inputFeatures, LeakyReLU)
+      
+      -- Update weights
+      UpdateNetworkWeights(net, inputFeatures, lr, 1.0)
+      
+      -- Track accuracy
+      AI.WinProbabilityEstimator.totalPredictions += 1
+      local correctPrediction = (prediction > 0.5 and wonMatch) or (prediction <= 0.5 and not wonMatch)
+      if correctPrediction then
+          AI.WinProbabilityEstimator.correctPredictions += 1
+      end
+      AI.WinProbabilityEstimator.predictionAccuracy = 
+          AI.WinProbabilityEstimator.correctPredictions / AI.WinProbabilityEstimator.totalPredictions
+      
+      if CONST.DEBUG_MODE then
+          print(string.format("Win Probability Training: Predicted %.2f, Actual %d, Accuracy: %.1f%%", 
+              prediction, wonMatch and 1 or 0, AI.WinProbabilityEstimator.predictionAccuracy * 100))
+      end
+  end
+  
+  -- Record match snapshot for later training
+  function AI.DeepLearning.RecordMatchSnapshot(state)
+      if not AI.WinProbabilityEstimator.enabled then return end
+      
+      local matchHistory = AI.WinProbabilityEstimator.matchHistory
+      local snapshot = {
+          myHealthPercent = state.myHealthPercent or 0.5,
+          targetHealthPercent = state.targetHealthPercent or 0.5,
+          attackReady = (os.clock() - (AI.State.lastActionTimes.ATTACK or 0)) > CONST.ATTACK_COOLDOWN,
+          specialReady = (os.clock() - (AI.State.lastActionTimes.SPECIAL or 0)) > CONST.SPECIAL_MOVE_COOLDOWN,
+          evadeReady = (os.clock() - (AI.State.lastActionTimes.EVADE or 0)) > CONST.DASH_COOLDOWN,
+          enemyAttacking = state.isTargetAttacking or false,
+          distance = state.distance or 100,
+          timeRemaining = 300 - (os.clock() - (AI.State.matchStartTime or os.clock())),
+          energy = state.energy or 250,
+          comboCount = AI.State.comboCount or 0,
+          timestamp = os.clock()
+      }
+      
+      table.insert(matchHistory, snapshot)
+      
+      -- Keep only recent snapshots
+      if #matchHistory > AI.WinProbabilityEstimator.maxMatchHistory then
+          table.remove(matchHistory, 1)
+      end
+  end
+  
+  -- Train on match end
+  function AI.DeepLearning.TrainOnMatchEnd(wonMatch)
+      if not AI.WinProbabilityEstimator.enabled then return end
+      
+      -- Train on all snapshots from this match
+      for _, snapshot in ipairs(AI.WinProbabilityEstimator.matchHistory) do
+          AI.DeepLearning.TrainWinProbability(snapshot, wonMatch)
+      end
+      
+      -- Clear match history for next match
+      AI.WinProbabilityEstimator.matchHistory = {}
+      
+      if CONST.DEBUG_MODE then
+          print(string.format("Match ended: %s. Trained Win Probability Estimator.", wonMatch and "WON" or "LOST"))
       end
   end
 
@@ -3299,6 +3485,37 @@ local function initializeCombatSystem(character)
       -- Cooldown to prevent rapid tactic switching.
       if now - AI.State.lastTacticChangeTime < CONST.TACTIC_CHANGE_COOLDOWN then
           return AI.State.currentTactic
+      end
+
+      -- NEW: Win Probability Estimator - Dynamic tactic selection based on predicted win probability
+      if AI.WinProbabilityEstimator.enabled then
+          local winProb = AI.DeepLearning.PredictWinProbability(state)
+          
+          -- Store prediction for debugging
+          AI.State.lastWinProbability = winProb
+          
+          -- Dynamic tactic switching based on win probability
+          if winProb < AI.WinProbabilityEstimator.defensiveThreshold then
+              -- Low win probability (<0.4) - Switch to Defensive/Turtle mode
+              if AI.State.currentTactic ~= "Defensive" then
+                  AI.State.lastTacticChangeTime = now
+                  AI.State.tacticConfidence = 100
+                  print(string.format("🛡️ Win Probability %.2f < 0.4 - Switching to DEFENSIVE mode", winProb))
+              end
+              return "Defensive"
+          elseif winProb > AI.WinProbabilityEstimator.aggressiveThreshold then
+              -- High win probability (>0.8) - Switch to Aggressive/Finisher to end fight
+              local chosenTactic = state.targetHealthPercent < 0.3 and "Finisher" or "Aggressive"
+              if AI.State.currentTactic ~= chosenTactic then
+                  AI.State.lastTacticChangeTime = now
+                  AI.State.tacticConfidence = 100
+                  print(string.format("⚔️ Win Probability %.2f > 0.8 - Switching to %s mode", winProb, chosenTactic:upper()))
+              end
+              return chosenTactic
+          end
+          
+          -- Record match snapshot for training
+          AI.DeepLearning.RecordMatchSnapshot(state)
       end
 
       -- If confidence is critical, switch to experimental mode.
@@ -4452,6 +4669,10 @@ local function initializeCombatSystem(character)
               AI.Score += 10
               print(`Target eliminated. New Score: {AI.Score}`)
               AI.State.currentTarget = nil
+              -- Train Win Probability Estimator on match victory
+              if AI.WinProbabilityEstimator.enabled then
+                  AI.DeepLearning.TrainOnMatchEnd(true) -- We won
+              end
               -- Save character model on successful elimination
               AI.Learning.SaveCharacterModel()
           end)
@@ -5056,6 +5277,10 @@ local function initializeCombatSystem(character)
   table.insert(connections, humanoid.Died:Connect(function()
       AI.Score -= 10
       print(`Project Apex defeated. New Score: {AI.Score}.`)
+      -- Train Win Probability Estimator on match defeat
+      if AI.WinProbabilityEstimator.enabled then
+          AI.DeepLearning.TrainOnMatchEnd(false) -- We lost
+      end
       Cleanup()
   end))
   table.insert(connections, character.AncestryChanged:Connect(function(_, parent)
