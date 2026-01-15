@@ -531,7 +531,7 @@ local function CreateTrainingGUI(char, rp)
         if AI.SelfPlaySystem.enabled then
             selfPlayButton.Text = "Self-Play: ON 🤖"
             selfPlayButton.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
-            if AI.DeepLearning.InitializeSelfPlay then
+            if AI.DeepLearning and AI.DeepLearning.InitializeSelfPlay then
                 AI.DeepLearning.InitializeSelfPlay()
             end
             print("🤖 Self-Play System ENABLED - Clone will use best weights (AlphaGo-style training)")
