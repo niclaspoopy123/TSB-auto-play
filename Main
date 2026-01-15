@@ -300,7 +300,7 @@ local function CreateTrainingGUI(char, rp)
     -- Main Frame
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 250, 0, 180)
+    mainFrame.Size = UDim2.new(0, 250, 0, 230) -- Increased height for new button
     mainFrame.Position = UDim2.new(0.85, 0, 0.1, 0)
     mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
     mainFrame.BorderSizePixel = 2
@@ -323,42 +323,56 @@ local function CreateTrainingGUI(char, rp)
     -- Training vs Clone Button
     local trainVsCloneButton = Instance.new("TextButton")
     trainVsCloneButton.Name = "TrainVsCloneButton"
-    trainVsCloneButton.Size = UDim2.new(0.9, 0, 0, 40)
+    trainVsCloneButton.Size = UDim2.new(0.9, 0, 0, 35) -- Reduced height
     trainVsCloneButton.Position = UDim2.new(0.05, 0, 0, 45)
     trainVsCloneButton.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
     trainVsCloneButton.BorderSizePixel = 1
     trainVsCloneButton.BorderColor3 = Color3.fromRGB(100, 255, 100)
     trainVsCloneButton.Text = "Train vs AI Clone"
     trainVsCloneButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    trainVsCloneButton.TextSize = 16
+    trainVsCloneButton.TextSize = 14
     trainVsCloneButton.Font = Enum.Font.GothamBold
     trainVsCloneButton.Parent = mainFrame
     
     -- Train vs Players Button
     local trainVsPlayersButton = Instance.new("TextButton")
     trainVsPlayersButton.Name = "TrainVsPlayersButton"
-    trainVsPlayersButton.Size = UDim2.new(0.9, 0, 0, 40)
-    trainVsPlayersButton.Position = UDim2.new(0.05, 0, 0, 95)
+    trainVsPlayersButton.Size = UDim2.new(0.9, 0, 0, 35) -- Reduced height
+    trainVsPlayersButton.Position = UDim2.new(0.05, 0, 0, 88)
     trainVsPlayersButton.BackgroundColor3 = Color3.fromRGB(50, 100, 200)
     trainVsPlayersButton.BorderSizePixel = 1
     trainVsPlayersButton.BorderColor3 = Color3.fromRGB(100, 150, 255)
     trainVsPlayersButton.Text = "Train vs Players"
     trainVsPlayersButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    trainVsPlayersButton.TextSize = 16
+    trainVsPlayersButton.TextSize = 14
     trainVsPlayersButton.Font = Enum.Font.GothamBold
     trainVsPlayersButton.Parent = mainFrame
+    
+    -- Self-Play Toggle Button
+    local selfPlayButton = Instance.new("TextButton")
+    selfPlayButton.Name = "SelfPlayButton"
+    selfPlayButton.Size = UDim2.new(0.9, 0, 0, 35)
+    selfPlayButton.Position = UDim2.new(0.05, 0, 0, 131)
+    selfPlayButton.BackgroundColor3 = Color3.fromRGB(150, 100, 200)
+    selfPlayButton.BorderSizePixel = 1
+    selfPlayButton.BorderColor3 = Color3.fromRGB(200, 150, 255)
+    selfPlayButton.Text = "Self-Play: OFF"
+    selfPlayButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    selfPlayButton.TextSize = 14
+    selfPlayButton.Font = Enum.Font.GothamBold
+    selfPlayButton.Parent = mainFrame
     
     -- Stop Training Button
     local stopTrainingButton = Instance.new("TextButton")
     stopTrainingButton.Name = "StopTrainingButton"
     stopTrainingButton.Size = UDim2.new(0.9, 0, 0, 35)
-    stopTrainingButton.Position = UDim2.new(0.05, 0, 0, 145)
+    stopTrainingButton.Position = UDim2.new(0.05, 0, 0, 174)
     stopTrainingButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
     stopTrainingButton.BorderSizePixel = 1
     stopTrainingButton.BorderColor3 = Color3.fromRGB(255, 100, 100)
     stopTrainingButton.Text = "Stop Training"
     stopTrainingButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    stopTrainingButton.TextSize = 16
+    stopTrainingButton.TextSize = 14
     stopTrainingButton.Font = Enum.Font.GothamBold
     stopTrainingButton.Parent = mainFrame
     
@@ -403,7 +417,7 @@ local function CreateTrainingGUI(char, rp)
     uiCorner.CornerRadius = UDim.new(0, 8)
     uiCorner.Parent = mainFrame
     
-    for _, button in pairs({trainVsCloneButton, trainVsPlayersButton, stopTrainingButton}) do
+    for _, button in pairs({trainVsCloneButton, trainVsPlayersButton, selfPlayButton, stopTrainingButton}) do
         local buttonCorner = Instance.new("UICorner")
         buttonCorner.CornerRadius = UDim.new(0, 6)
         buttonCorner.Parent = button
@@ -501,6 +515,22 @@ local function CreateTrainingGUI(char, rp)
         print("Training mode enabled: AI vs Players")
         trainVsPlayersButton.Text = "✓ Training vs Players"
         trainVsPlayersButton.BackgroundColor3 = Color3.fromRGB(100, 150, 255)
+    end)
+    
+    -- Self-Play Toggle Button Handler
+    selfPlayButton.MouseButton1Click:Connect(function()
+        AI.SelfPlaySystem.enabled = not AI.SelfPlaySystem.enabled
+        
+        if AI.SelfPlaySystem.enabled then
+            selfPlayButton.Text = "Self-Play: ON 🤖"
+            selfPlayButton.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
+            AI.DeepLearning.InitializeSelfPlay()
+            print("🤖 Self-Play System ENABLED - Clone will use best weights (AlphaGo-style training)")
+        else
+            selfPlayButton.Text = "Self-Play: OFF"
+            selfPlayButton.BackgroundColor3 = Color3.fromRGB(150, 100, 200)
+            print("Self-Play System DISABLED")
+        end
     end)
     
     stopTrainingButton.MouseButton1Click:Connect(function()
@@ -645,7 +675,13 @@ local function CreateESPAndDebugHUD()
     local function UpdateHUD()
         if AI.State then
             stateLabel.Text = "State: " .. (AI.State.combatState or "IDLE")
-            tacticLabel.Text = "Tactic: " .. (AI.State.currentTactic or "N/A")
+            
+            -- Show tactic with win probability if available
+            local tacticText = "Tactic: " .. (AI.State.currentTactic or "N/A")
+            if AI.WinProbabilityEstimator.enabled and AI.State.lastWinProbability then
+                tacticText = tacticText .. string.format(" (Win: %.0f%%)", AI.State.lastWinProbability * 100)
+            end
+            tacticLabel.Text = tacticText
             
             if AI.State.currentTarget then
                 local targetName = AI.State.currentTarget.Name
@@ -1025,6 +1061,41 @@ local AI = {
       outputWeights = {},
       -- Cached attention scores
       attentionScores = {},
+  },
+  --// WIN PROBABILITY ESTIMATOR: Meta-controller for dynamic tactic selection
+  WinProbabilityEstimator = {
+      enabled = true,
+      -- 3-layer feedforward neural network
+      network = {
+          layer1 = { weights = {}, biases = {}, size = 16, activations = {}, gradients = {} }, -- Input: 10 features -> Hidden: 16
+          layer2 = { weights = {}, biases = {}, size = 12, activations = {}, gradients = {} }, -- Hidden: 16 -> Hidden: 12
+          layer3 = { weights = {}, biases = {}, size = 1, activations = {}, gradients = {} },  -- Hidden: 12 -> Output: 1 (win probability)
+      },
+      inputSize = 10, -- [MyHP, EnemyHP, MyCooldowns, EnemyCooldowns, Distance, TimeRemaining, Energy, ComboCount, DamageDealt, DamageTaken]
+      learningRate = 0.002,
+      -- Match history for training
+      matchHistory = {},
+      maxMatchHistory = 100,
+      -- Thresholds for tactic switching
+      defensiveThreshold = 0.4, -- < 0.4 = switch to Defensive/Turtle
+      aggressiveThreshold = 0.8, -- > 0.8 = switch to Aggressive/Finisher
+      -- Performance tracking
+      predictionAccuracy = 0,
+      totalPredictions = 0,
+      correctPredictions = 0,
+  },
+  --// SELF-PLAY SYSTEM: Shadow boxing for AlphaGo-style training
+  SelfPlaySystem = {
+      enabled = false, -- Can be enabled via GUI or config
+      bestWeightsVersion = 0,
+      currentVersion = 0,
+      bestWeights = nil, -- Stored best weights
+      winRateThreshold = 0.60, -- Need >60% win rate to become new best
+      -- Match tracking for self-play
+      matchesVsBest = 0,
+      winsVsBest = 0,
+      lastSaveTime = 0,
+      saveInterval = 300, -- Save best weights every 5 minutes if improved
   },
   Evaluation = {},
   Actions = {},
@@ -1433,6 +1504,12 @@ local function InitializeDeepNetworks()
         AI.LSTMOpponentModel.hiddenState[i] = 0
     end
     
+    -- Initialize Win Probability Estimator network
+    if AI.WinProbabilityEstimator.enabled then
+        InitializeNetwork(AI.WinProbabilityEstimator.network, AI.WinProbabilityEstimator.inputSize)
+        print("Win Probability Estimator initialized")
+    end
+    
     -- Initialize state normalization
     if AI.StateNormalization.enabled then
         for i = 1, AI.DeepNetwork.inputSize do
@@ -1816,6 +1893,9 @@ local function initializeCombatSystem(character)
           -- Adaptive learning rate
           currentLearningRate = CONST.LEARNING_RATE_ALPHA,
           recentPerformance = {},
+          -- Win Probability tracking
+          matchStartTime = os.clock(),
+          lastWinProbability = 0.5,
       }
       print("AI State reset. Learned statistics and score have been preserved.")
   end
@@ -1831,8 +1911,13 @@ local function initializeCombatSystem(character)
 
   -- Initialize Deep Neural Networks
   InitializeDeepNetworks()
+  
+  -- Initialize self-play system if enabled
+  if AI.SelfPlaySystem.enabled then
+      AI.DeepLearning.InitializeSelfPlay()
+  end
 
-  print(`Initializing Project Deep Apex Elite (V37.3) for {player.Name}... Character: {AI.IdentifiedCharacter}. Deep Neural Network, Dueling DQN, Actor-Critic, ICM Curiosity, Distributional RL, Attention Mechanism, LSTM Opponent Modeling & Enhanced Combo System with Superior Prediction active.`)
+  print(`Initializing Project Deep Apex Elite (V37.3) for {player.Name}... Character: {AI.IdentifiedCharacter}. Deep Neural Network, Dueling DQN, Actor-Critic, ICM Curiosity, Distributional RL, Attention Mechanism, LSTM Opponent Modeling, Win Probability Estimator & Self-Play System active.`)
 
   --// ================= CORE AI LOGIC ================= //
 
@@ -2467,6 +2552,264 @@ local function initializeCombatSystem(character)
               end
           end
       end
+  end
+
+  --// --- WIN PROBABILITY ESTIMATOR FUNCTIONS ---
+  
+  -- Forward pass through Win Probability Estimator network
+  function AI.DeepLearning.PredictWinProbability(state)
+      if not AI.WinProbabilityEstimator.enabled then return 0.5 end
+      
+      -- Encode input features: [MyHP, EnemyHP, MyCooldowns, EnemyCooldowns, Distance, TimeRemaining, Energy, ComboCount, DamageDealt, DamageTaken]
+      local inputFeatures = {
+          state.myHealthPercent or 0.5,
+          state.targetHealthPercent or 0.5,
+          -- Cooldown factors (1.0 = ready, 0.0 = on cooldown)
+          (state.attackReady and 1.0 or 0.0) or 0.8,
+          (state.specialReady and 1.0 or 0.0) or 0.7,
+          (state.evadeReady and 1.0 or 0.0) or 0.9,
+          (state.enemyAttacking and 1.0 or 0.0) or 0.5,
+          -- Distance (normalized to 0-1 range, assuming max 200)
+          math.min(1.0, (state.distance or 100) / 200),
+          -- Time remaining (normalized, assuming 300 second matches)
+          math.min(1.0, (state.timeRemaining or 150) / 300),
+          -- Energy (normalized to 0-1)
+          (state.energy or 250) / 500,
+          -- Combo count (normalized, max expected 10)
+          math.min(1.0, (state.comboCount or 0) / 10),
+      }
+      
+      -- Forward pass through 3-layer network
+      local net = AI.WinProbabilityEstimator.network
+      local hidden1 = ForwardLayer(net.layer1, inputFeatures, LeakyReLU)
+      local hidden2 = ForwardLayer(net.layer2, hidden1, LeakyReLU)
+      local output = ForwardLayer(net.layer3, hidden2, Sigmoid) -- Output in range [0, 1]
+      
+      -- Return win probability
+      return output[1]
+  end
+  
+  -- Train Win Probability Estimator with match result
+  function AI.DeepLearning.TrainWinProbability(matchData, wonMatch)
+      if not AI.WinProbabilityEstimator.enabled then return end
+      
+      local net = AI.WinProbabilityEstimator.network
+      local lr = AI.WinProbabilityEstimator.learningRate
+      
+      -- Target: 1.0 for win, 0.0 for loss
+      local target = wonMatch and 1.0 or 0.0
+      
+      -- Forward pass
+      local inputFeatures = {
+          matchData.myHealthPercent or 0.5,
+          matchData.targetHealthPercent or 0.5,
+          (matchData.attackReady and 1.0 or 0.0) or 0.8,
+          (matchData.specialReady and 1.0 or 0.0) or 0.7,
+          (matchData.evadeReady and 1.0 or 0.0) or 0.9,
+          (matchData.enemyAttacking and 1.0 or 0.0) or 0.5,
+          math.min(1.0, (matchData.distance or 100) / 200),
+          math.min(1.0, (matchData.timeRemaining or 150) / 300),
+          (matchData.energy or 250) / 500,
+          math.min(1.0, (matchData.comboCount or 0) / 10),
+      }
+      
+      local hidden1 = ForwardLayer(net.layer1, inputFeatures, LeakyReLU)
+      local hidden2 = ForwardLayer(net.layer2, hidden1, LeakyReLU)
+      local output = ForwardLayer(net.layer3, hidden2, Sigmoid)
+      
+      local prediction = output[1]
+      
+      -- Calculate loss (binary cross-entropy)
+      local error = target - prediction
+      
+      -- Backward pass
+      local outputGradient = {error * prediction * (1 - prediction)} -- Sigmoid derivative
+      local grad2 = BackwardLayer(net.layer3, net.layer2, outputGradient, hidden2, nil)
+      local grad1 = BackwardLayer(net.layer2, net.layer1, grad2, hidden1, LeakyReLU)
+      BackwardLayer(net.layer1, nil, grad1, inputFeatures, LeakyReLU)
+      
+      -- Update weights
+      UpdateNetworkWeights(net, inputFeatures, lr, 1.0)
+      
+      -- Track accuracy
+      AI.WinProbabilityEstimator.totalPredictions += 1
+      local correctPrediction = (prediction > 0.5 and wonMatch) or (prediction <= 0.5 and not wonMatch)
+      if correctPrediction then
+          AI.WinProbabilityEstimator.correctPredictions += 1
+      end
+      AI.WinProbabilityEstimator.predictionAccuracy = 
+          AI.WinProbabilityEstimator.correctPredictions / AI.WinProbabilityEstimator.totalPredictions
+      
+      if CONST.DEBUG_MODE then
+          print(string.format("Win Probability Training: Predicted %.2f, Actual %d, Accuracy: %.1f%%", 
+              prediction, wonMatch and 1 or 0, AI.WinProbabilityEstimator.predictionAccuracy * 100))
+      end
+  end
+  
+  -- Record match snapshot for later training
+  function AI.DeepLearning.RecordMatchSnapshot(state)
+      if not AI.WinProbabilityEstimator.enabled then return end
+      
+      local matchHistory = AI.WinProbabilityEstimator.matchHistory
+      local snapshot = {
+          myHealthPercent = state.myHealthPercent or 0.5,
+          targetHealthPercent = state.targetHealthPercent or 0.5,
+          attackReady = (os.clock() - (AI.State.lastActionTimes.ATTACK or 0)) > CONST.ATTACK_COOLDOWN,
+          specialReady = (os.clock() - (AI.State.lastActionTimes.SPECIAL or 0)) > CONST.SPECIAL_MOVE_COOLDOWN,
+          evadeReady = (os.clock() - (AI.State.lastActionTimes.EVADE or 0)) > CONST.DASH_COOLDOWN,
+          enemyAttacking = state.isTargetAttacking or false,
+          distance = state.distance or 100,
+          timeRemaining = 300 - (os.clock() - (AI.State.matchStartTime or os.clock())),
+          energy = state.energy or 250,
+          comboCount = AI.State.comboCount or 0,
+          timestamp = os.clock()
+      }
+      
+      table.insert(matchHistory, snapshot)
+      
+      -- Keep only recent snapshots
+      if #matchHistory > AI.WinProbabilityEstimator.maxMatchHistory then
+          table.remove(matchHistory, 1)
+      end
+  end
+  
+  -- Train on match end
+  function AI.DeepLearning.TrainOnMatchEnd(wonMatch)
+      if not AI.WinProbabilityEstimator.enabled then return end
+      
+      -- Train on all snapshots from this match
+      for _, snapshot in ipairs(AI.WinProbabilityEstimator.matchHistory) do
+          AI.DeepLearning.TrainWinProbability(snapshot, wonMatch)
+      end
+      
+      -- Clear match history for next match
+      AI.WinProbabilityEstimator.matchHistory = {}
+      
+      if CONST.DEBUG_MODE then
+          print(string.format("Match ended: %s. Trained Win Probability Estimator.", wonMatch and "WON" or "LOST"))
+      end
+  end
+
+  --// --- SELF-PLAY SYSTEM FUNCTIONS ---
+  
+  -- Deep copy a weight table (for saving best weights)
+  local function DeepCopyWeights(original)
+      if type(original) ~= "table" then return original end
+      local copy = {}
+      for k, v in pairs(original) do
+          copy[k] = DeepCopyWeights(v)
+      end
+      return copy
+  end
+  
+  -- Save current weights as "best" weights
+  function AI.DeepLearning.SaveBestWeights()
+      if not AI.SelfPlaySystem.enabled then return end
+      
+      -- Deep copy all learnable weights
+      AI.SelfPlaySystem.bestWeights = {
+          ActionStats = DeepCopyWeights(AI.ActionStats),
+          QNetworkB = DeepCopyWeights(AI.QNetworkB),
+          DeepNetworkWeights = {
+              valueNet = DeepCopyWeights(AI.DeepNetwork.valueNet),
+              advantageNet = DeepCopyWeights(AI.DeepNetwork.advantageNet),
+              policyNet = DeepCopyWeights(AI.DeepNetwork.policyNet),
+          },
+          FeatureWeights = DeepCopyWeights(AI.FeatureWeights),
+          version = AI.SelfPlaySystem.currentVersion
+      }
+      
+      AI.SelfPlaySystem.bestWeightsVersion = AI.SelfPlaySystem.currentVersion
+      AI.SelfPlaySystem.lastSaveTime = os.clock()
+      
+      print(string.format("💾 Best weights saved (Version %d). Win rate: %.1f%%", 
+          AI.SelfPlaySystem.bestWeightsVersion,
+          (AI.SelfPlaySystem.winsVsBest / math.max(1, AI.SelfPlaySystem.matchesVsBest)) * 100))
+  end
+  
+  -- Load best weights into clone AI brain
+  function AI.DeepLearning.LoadBestWeightsIntoClone(cloneAI)
+      if not AI.SelfPlaySystem.enabled or not AI.SelfPlaySystem.bestWeights then 
+          return false
+      end
+      
+      -- Copy best weights to clone's AI brain
+      if cloneAI and cloneAI.ActionStats and AI.SelfPlaySystem.bestWeights.ActionStats then
+          cloneAI.ActionStats = DeepCopyWeights(AI.SelfPlaySystem.bestWeights.ActionStats)
+          cloneAI.QNetworkB = DeepCopyWeights(AI.SelfPlaySystem.bestWeights.QNetworkB)
+          cloneAI.FeatureWeights = DeepCopyWeights(AI.SelfPlaySystem.bestWeights.FeatureWeights)
+          
+          print(string.format("✨ Clone loaded best weights (Version %d) for shadow boxing", 
+              AI.SelfPlaySystem.bestWeightsVersion))
+          return true
+      end
+      
+      return false
+  end
+  
+  -- Update self-play statistics after match
+  function AI.DeepLearning.UpdateSelfPlayStats(wonMatch)
+      if not AI.SelfPlaySystem.enabled then return end
+      if not TrainingMode.enabled or not TrainingMode.trainingAgainstClone then return end
+      
+      AI.SelfPlaySystem.matchesVsBest += 1
+      if wonMatch then
+          AI.SelfPlaySystem.winsVsBest += 1
+      end
+      
+      local winRate = AI.SelfPlaySystem.winsVsBest / AI.SelfPlaySystem.matchesVsBest
+      
+      if CONST.DEBUG_MODE then
+          print(string.format("Self-Play Stats: %d/%d wins (%.1f%% win rate)", 
+              AI.SelfPlaySystem.winsVsBest, AI.SelfPlaySystem.matchesVsBest, winRate * 100))
+      end
+      
+      -- Check if we should promote current weights to "best"
+      if AI.SelfPlaySystem.matchesVsBest >= 10 then -- Need at least 10 matches
+          if winRate >= AI.SelfPlaySystem.winRateThreshold then
+              print(string.format("🏆 NEW BEST! Win rate %.1f%% > %.0f%%. Promoting to best weights.", 
+                  winRate * 100, AI.SelfPlaySystem.winRateThreshold * 100))
+              
+              AI.SelfPlaySystem.currentVersion += 1
+              AI.DeepLearning.SaveBestWeights()
+              
+              -- Reset stats for next evaluation period
+              AI.SelfPlaySystem.matchesVsBest = 0
+              AI.SelfPlaySystem.winsVsBest = 0
+              
+              -- Recreate clone with new best weights
+              if TrainingMode.trainingAgainstClone and TrainingMode.cloneCharacter then
+                  print("Recreating clone with newly promoted best weights...")
+                  task.spawn(function()
+                      task.wait(2) -- Brief delay
+                      local success, err = pcall(function()
+                          if rootPart and rootPart.Parent then
+                              CreateAIClone()
+                          end
+                      end)
+                      if not success then
+                          warn("Failed to recreate clone:", err)
+                      end
+                  end)
+              end
+          elseif AI.SelfPlaySystem.matchesVsBest >= 20 then
+              -- After 20 matches with < 60% win rate, reset for fresh evaluation
+              print(string.format("Reset self-play stats. Win rate %.1f%% did not reach threshold.", winRate * 100))
+              AI.SelfPlaySystem.matchesVsBest = 0
+              AI.SelfPlaySystem.winsVsBest = 0
+          end
+      end
+  end
+  
+  -- Initialize self-play system with current weights as baseline
+  function AI.DeepLearning.InitializeSelfPlay()
+      if not AI.SelfPlaySystem.enabled then return end
+      
+      -- Save current weights as baseline "best"
+      AI.SelfPlaySystem.currentVersion = 1
+      AI.DeepLearning.SaveBestWeights()
+      
+      print("🤖 Self-Play System initialized. Clone will use best weights for shadow boxing training.")
   end
 
   --// --- LEARNING MODULE ---
@@ -3301,6 +3644,37 @@ local function initializeCombatSystem(character)
           return AI.State.currentTactic
       end
 
+      -- NEW: Win Probability Estimator - Dynamic tactic selection based on predicted win probability
+      if AI.WinProbabilityEstimator.enabled then
+          local winProb = AI.DeepLearning.PredictWinProbability(state)
+          
+          -- Store prediction for debugging
+          AI.State.lastWinProbability = winProb
+          
+          -- Dynamic tactic switching based on win probability
+          if winProb < AI.WinProbabilityEstimator.defensiveThreshold then
+              -- Low win probability (<0.4) - Switch to Defensive/Turtle mode
+              if AI.State.currentTactic ~= "Defensive" then
+                  AI.State.lastTacticChangeTime = now
+                  AI.State.tacticConfidence = 100
+                  print(string.format("🛡️ Win Probability %.2f < 0.4 - Switching to DEFENSIVE mode", winProb))
+              end
+              return "Defensive"
+          elseif winProb > AI.WinProbabilityEstimator.aggressiveThreshold then
+              -- High win probability (>0.8) - Switch to Aggressive/Finisher to end fight
+              local chosenTactic = state.targetHealthPercent < 0.3 and "Finisher" or "Aggressive"
+              if AI.State.currentTactic ~= chosenTactic then
+                  AI.State.lastTacticChangeTime = now
+                  AI.State.tacticConfidence = 100
+                  print(string.format("⚔️ Win Probability %.2f > 0.8 - Switching to %s mode", winProb, chosenTactic:upper()))
+              end
+              return chosenTactic
+          end
+          
+          -- Record match snapshot for training
+          AI.DeepLearning.RecordMatchSnapshot(state)
+      end
+
       -- If confidence is critical, switch to experimental mode.
       if AI.State.tacticConfidence < CONST.EXPLOIT_SEEKER_CONFIDENCE_THRESHOLD and now - AI.State.lastExploitSeekerTriggerTime > CONST.EXPLOIT_SEEKER_COOLDOWN then
           AI.State.lastTacticChangeTime = now
@@ -4081,8 +4455,17 @@ local function initializeCombatSystem(character)
               cachedPredictedPos = nil,
               lastPredictionTime = 0,
               lastTargetVelocity = nil,
-          }
+          },
+          -- Add learning structures for self-play
+          ActionStats = nil, -- Will be loaded from best weights
+          QNetworkB = nil,
+          FeatureWeights = nil,
       }
+      
+      -- Load best weights into clone for shadow boxing (AlphaGo-style self-play)
+      if AI.SelfPlaySystem.enabled then
+          AI.DeepLearning.LoadBestWeightsIntoClone(TrainingMode.cloneAI)
+      end
       
       local cloneState = TrainingMode.cloneAI.State
       
@@ -4452,6 +4835,12 @@ local function initializeCombatSystem(character)
               AI.Score += 10
               print(`Target eliminated. New Score: {AI.Score}`)
               AI.State.currentTarget = nil
+              -- Train Win Probability Estimator on match victory
+              if AI.WinProbabilityEstimator.enabled then
+                  AI.DeepLearning.TrainOnMatchEnd(true) -- We won
+                  -- Update self-play statistics if training against clone
+                  AI.DeepLearning.UpdateSelfPlayStats(true)
+              end
               -- Save character model on successful elimination
               AI.Learning.SaveCharacterModel()
           end)
@@ -5056,6 +5445,12 @@ local function initializeCombatSystem(character)
   table.insert(connections, humanoid.Died:Connect(function()
       AI.Score -= 10
       print(`Project Apex defeated. New Score: {AI.Score}.`)
+      -- Train Win Probability Estimator on match defeat
+      if AI.WinProbabilityEstimator.enabled then
+          AI.DeepLearning.TrainOnMatchEnd(false) -- We lost
+      end
+      -- Update self-play statistics if training against clone
+      AI.DeepLearning.UpdateSelfPlayStats(false)
       Cleanup()
   end))
   table.insert(connections, character.AncestryChanged:Connect(function(_, parent)
