@@ -105,6 +105,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 local LogService = game:GetService("LogService")
+local HttpService = game:GetService("HttpService")
 
 --// ================= LOCAL PLAYER ================= //
 local player = Players.LocalPlayer
@@ -1102,6 +1103,209 @@ local AI = {
   Learning = {},
   DeepLearning = {} -- New module for deep learning functions
 }
+
+--// ================= AI PERSISTENCE SYSTEM ================= //
+-- Save AI training data to persistent storage
+local function SaveAIState()
+    -- Check if writefile is available (executor-specific function)
+    if not writefile then
+        warn("SaveAIState: writefile not available in this environment")
+        return false
+    end
+    
+    local success, err = pcall(function()
+        -- Prepare data for serialization
+        local dataToSave = {
+            version = "v37",
+            timestamp = os.time(),
+            Score = AI.Score,
+            ActionStats = AI.ActionStats,
+            QNetworkB = AI.QNetworkB,
+            FeatureWeights = AI.FeatureWeights,
+            OpponentModel = AI.OpponentModel,
+            CharacterModels = AI.CharacterModels,
+            MetaLearning = AI.MetaLearning,
+            -- Deep Network weights (large but essential)
+            DeepNetwork = {
+                valueNet = {
+                    layer1 = {
+                        weights = AI.DeepNetwork.valueNet.layer1.weights,
+                        biases = AI.DeepNetwork.valueNet.layer1.biases,
+                        layerNormGain = AI.DeepNetwork.valueNet.layer1.layerNormGain,
+                        layerNormBias = AI.DeepNetwork.valueNet.layer1.layerNormBias,
+                    },
+                    layer2 = {
+                        weights = AI.DeepNetwork.valueNet.layer2.weights,
+                        biases = AI.DeepNetwork.valueNet.layer2.biases,
+                        layerNormGain = AI.DeepNetwork.valueNet.layer2.layerNormGain,
+                        layerNormBias = AI.DeepNetwork.valueNet.layer2.layerNormBias,
+                    },
+                    layer3 = {
+                        weights = AI.DeepNetwork.valueNet.layer3.weights,
+                        biases = AI.DeepNetwork.valueNet.layer3.biases,
+                    },
+                },
+                advantageNet = {
+                    layer1 = {
+                        weights = AI.DeepNetwork.advantageNet.layer1.weights,
+                        biases = AI.DeepNetwork.advantageNet.layer1.biases,
+                        layerNormGain = AI.DeepNetwork.advantageNet.layer1.layerNormGain,
+                        layerNormBias = AI.DeepNetwork.advantageNet.layer1.layerNormBias,
+                    },
+                    layer2 = {
+                        weights = AI.DeepNetwork.advantageNet.layer2.weights,
+                        biases = AI.DeepNetwork.advantageNet.layer2.biases,
+                        layerNormGain = AI.DeepNetwork.advantageNet.layer2.layerNormGain,
+                        layerNormBias = AI.DeepNetwork.advantageNet.layer2.layerNormBias,
+                    },
+                    layer3 = {
+                        weights = AI.DeepNetwork.advantageNet.layer3.weights,
+                        biases = AI.DeepNetwork.advantageNet.layer3.biases,
+                    },
+                },
+            },
+        }
+        
+        -- Encode to JSON
+        local jsonData = HttpService:JSONEncode(dataToSave)
+        
+        -- Save to file
+        writefile("TSB_AI_Data_v37.json", jsonData)
+        
+        print("✅ AI State saved successfully to TSB_AI_Data_v37.json")
+        return true
+    end)
+    
+    if not success then
+        warn("SaveAIState error:", err)
+        return false
+    end
+    
+    return true
+end
+
+-- Load AI training data from persistent storage
+local function LoadAIState()
+    -- Check if readfile is available (executor-specific function)
+    if not readfile then
+        warn("LoadAIState: readfile not available in this environment")
+        return false
+    end
+    
+    if not isfile then
+        warn("LoadAIState: isfile not available in this environment")
+        return false
+    end
+    
+    -- Check if file exists
+    if not isfile("TSB_AI_Data_v37.json") then
+        print("No saved AI data found. Starting with fresh learning state.")
+        return false
+    end
+    
+    local success, err = pcall(function()
+        -- Read file
+        local jsonData = readfile("TSB_AI_Data_v37.json")
+        
+        -- Decode JSON
+        local loadedData = HttpService:JSONDecode(jsonData)
+        
+        -- Validate version
+        if loadedData.version ~= "v37" then
+            warn("AI data version mismatch. Expected v37, got", loadedData.version)
+            return false
+        end
+        
+        -- Restore data to AI table
+        AI.Score = loadedData.Score or 0
+        
+        -- Restore ActionStats
+        if loadedData.ActionStats then
+            AI.ActionStats = loadedData.ActionStats
+        end
+        
+        -- Restore QNetworkB
+        if loadedData.QNetworkB then
+            AI.QNetworkB = loadedData.QNetworkB
+        end
+        
+        -- Restore FeatureWeights
+        if loadedData.FeatureWeights then
+            AI.FeatureWeights = loadedData.FeatureWeights
+        end
+        
+        -- Restore OpponentModel
+        if loadedData.OpponentModel then
+            AI.OpponentModel = loadedData.OpponentModel
+        end
+        
+        -- Restore CharacterModels
+        if loadedData.CharacterModels then
+            AI.CharacterModels = loadedData.CharacterModels
+        end
+        
+        -- Restore MetaLearning
+        if loadedData.MetaLearning then
+            AI.MetaLearning = loadedData.MetaLearning
+        end
+        
+        -- Restore Deep Network weights
+        if loadedData.DeepNetwork then
+            -- Restore valueNet
+            if loadedData.DeepNetwork.valueNet then
+                if loadedData.DeepNetwork.valueNet.layer1 then
+                    AI.DeepNetwork.valueNet.layer1.weights = loadedData.DeepNetwork.valueNet.layer1.weights or {}
+                    AI.DeepNetwork.valueNet.layer1.biases = loadedData.DeepNetwork.valueNet.layer1.biases or {}
+                    AI.DeepNetwork.valueNet.layer1.layerNormGain = loadedData.DeepNetwork.valueNet.layer1.layerNormGain or {}
+                    AI.DeepNetwork.valueNet.layer1.layerNormBias = loadedData.DeepNetwork.valueNet.layer1.layerNormBias or {}
+                end
+                if loadedData.DeepNetwork.valueNet.layer2 then
+                    AI.DeepNetwork.valueNet.layer2.weights = loadedData.DeepNetwork.valueNet.layer2.weights or {}
+                    AI.DeepNetwork.valueNet.layer2.biases = loadedData.DeepNetwork.valueNet.layer2.biases or {}
+                    AI.DeepNetwork.valueNet.layer2.layerNormGain = loadedData.DeepNetwork.valueNet.layer2.layerNormGain or {}
+                    AI.DeepNetwork.valueNet.layer2.layerNormBias = loadedData.DeepNetwork.valueNet.layer2.layerNormBias or {}
+                end
+                if loadedData.DeepNetwork.valueNet.layer3 then
+                    AI.DeepNetwork.valueNet.layer3.weights = loadedData.DeepNetwork.valueNet.layer3.weights or {}
+                    AI.DeepNetwork.valueNet.layer3.biases = loadedData.DeepNetwork.valueNet.layer3.biases or {}
+                end
+            end
+            
+            -- Restore advantageNet
+            if loadedData.DeepNetwork.advantageNet then
+                if loadedData.DeepNetwork.advantageNet.layer1 then
+                    AI.DeepNetwork.advantageNet.layer1.weights = loadedData.DeepNetwork.advantageNet.layer1.weights or {}
+                    AI.DeepNetwork.advantageNet.layer1.biases = loadedData.DeepNetwork.advantageNet.layer1.biases or {}
+                    AI.DeepNetwork.advantageNet.layer1.layerNormGain = loadedData.DeepNetwork.advantageNet.layer1.layerNormGain or {}
+                    AI.DeepNetwork.advantageNet.layer1.layerNormBias = loadedData.DeepNetwork.advantageNet.layer1.layerNormBias or {}
+                end
+                if loadedData.DeepNetwork.advantageNet.layer2 then
+                    AI.DeepNetwork.advantageNet.layer2.weights = loadedData.DeepNetwork.advantageNet.layer2.weights or {}
+                    AI.DeepNetwork.advantageNet.layer2.biases = loadedData.DeepNetwork.advantageNet.layer2.biases or {}
+                    AI.DeepNetwork.advantageNet.layer2.layerNormGain = loadedData.DeepNetwork.advantageNet.layer2.layerNormGain or {}
+                    AI.DeepNetwork.advantageNet.layer2.layerNormBias = loadedData.DeepNetwork.advantageNet.layer2.layerNormBias or {}
+                end
+                if loadedData.DeepNetwork.advantageNet.layer3 then
+                    AI.DeepNetwork.advantageNet.layer3.weights = loadedData.DeepNetwork.advantageNet.layer3.weights or {}
+                    AI.DeepNetwork.advantageNet.layer3.biases = loadedData.DeepNetwork.advantageNet.layer3.biases or {}
+                end
+            end
+        end
+        
+        print("✅ AI State loaded successfully from TSB_AI_Data_v37.json")
+        print("  - Total Trials:", AI.ActionStats.totalTrials)
+        print("  - Score:", AI.Score)
+        print("  - Data timestamp:", os.date("%Y-%m-%d %H:%M:%S", loadedData.timestamp))
+        return true
+    end)
+    
+    if not success then
+        warn("LoadAIState error:", err)
+        return false
+    end
+    
+    return true
+end
 
 --// ================= DEEP LEARNING UTILITIES ================= //
 
@@ -5508,6 +5712,33 @@ local function initializeCombatSystem(character)
 end
 
 --// ================= SCRIPT ENTRY POINT ================= //
+
+-- Load AI state on startup
+task.spawn(function()
+    local success = LoadAIState()
+    if success then
+        print("🧠 AI learning data restored from previous session")
+    else
+        print("🧠 Starting with fresh AI learning state")
+    end
+end)
+
+-- Auto-save AI state every 60 seconds
+task.spawn(function()
+    while true do
+        task.wait(60)
+        SaveAIState()
+    end
+end)
+
+-- Save AI state when player leaves
+Players.PlayerRemoving:Connect(function(playerLeaving)
+    if playerLeaving == player then
+        print("💾 Saving AI state before exit...")
+        SaveAIState()
+    end
+end)
+
 -- Connect the initialization function to the CharacterAdded event.
 player.CharacterAdded:Connect(initializeCombatSystem)
 -- If the character already exists when the script runs, initialize immediately.
