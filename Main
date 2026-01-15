@@ -300,7 +300,7 @@ local function CreateTrainingGUI(char, rp)
     -- Main Frame
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 250, 0, 180)
+    mainFrame.Size = UDim2.new(0, 250, 0, 230) -- Increased height for new button
     mainFrame.Position = UDim2.new(0.85, 0, 0.1, 0)
     mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
     mainFrame.BorderSizePixel = 2
@@ -323,42 +323,56 @@ local function CreateTrainingGUI(char, rp)
     -- Training vs Clone Button
     local trainVsCloneButton = Instance.new("TextButton")
     trainVsCloneButton.Name = "TrainVsCloneButton"
-    trainVsCloneButton.Size = UDim2.new(0.9, 0, 0, 40)
+    trainVsCloneButton.Size = UDim2.new(0.9, 0, 0, 35) -- Reduced height
     trainVsCloneButton.Position = UDim2.new(0.05, 0, 0, 45)
     trainVsCloneButton.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
     trainVsCloneButton.BorderSizePixel = 1
     trainVsCloneButton.BorderColor3 = Color3.fromRGB(100, 255, 100)
     trainVsCloneButton.Text = "Train vs AI Clone"
     trainVsCloneButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    trainVsCloneButton.TextSize = 16
+    trainVsCloneButton.TextSize = 14
     trainVsCloneButton.Font = Enum.Font.GothamBold
     trainVsCloneButton.Parent = mainFrame
     
     -- Train vs Players Button
     local trainVsPlayersButton = Instance.new("TextButton")
     trainVsPlayersButton.Name = "TrainVsPlayersButton"
-    trainVsPlayersButton.Size = UDim2.new(0.9, 0, 0, 40)
-    trainVsPlayersButton.Position = UDim2.new(0.05, 0, 0, 95)
+    trainVsPlayersButton.Size = UDim2.new(0.9, 0, 0, 35) -- Reduced height
+    trainVsPlayersButton.Position = UDim2.new(0.05, 0, 0, 88)
     trainVsPlayersButton.BackgroundColor3 = Color3.fromRGB(50, 100, 200)
     trainVsPlayersButton.BorderSizePixel = 1
     trainVsPlayersButton.BorderColor3 = Color3.fromRGB(100, 150, 255)
     trainVsPlayersButton.Text = "Train vs Players"
     trainVsPlayersButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    trainVsPlayersButton.TextSize = 16
+    trainVsPlayersButton.TextSize = 14
     trainVsPlayersButton.Font = Enum.Font.GothamBold
     trainVsPlayersButton.Parent = mainFrame
+    
+    -- Self-Play Toggle Button
+    local selfPlayButton = Instance.new("TextButton")
+    selfPlayButton.Name = "SelfPlayButton"
+    selfPlayButton.Size = UDim2.new(0.9, 0, 0, 35)
+    selfPlayButton.Position = UDim2.new(0.05, 0, 0, 131)
+    selfPlayButton.BackgroundColor3 = Color3.fromRGB(150, 100, 200)
+    selfPlayButton.BorderSizePixel = 1
+    selfPlayButton.BorderColor3 = Color3.fromRGB(200, 150, 255)
+    selfPlayButton.Text = "Self-Play: OFF"
+    selfPlayButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    selfPlayButton.TextSize = 14
+    selfPlayButton.Font = Enum.Font.GothamBold
+    selfPlayButton.Parent = mainFrame
     
     -- Stop Training Button
     local stopTrainingButton = Instance.new("TextButton")
     stopTrainingButton.Name = "StopTrainingButton"
     stopTrainingButton.Size = UDim2.new(0.9, 0, 0, 35)
-    stopTrainingButton.Position = UDim2.new(0.05, 0, 0, 145)
+    stopTrainingButton.Position = UDim2.new(0.05, 0, 0, 174)
     stopTrainingButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
     stopTrainingButton.BorderSizePixel = 1
     stopTrainingButton.BorderColor3 = Color3.fromRGB(255, 100, 100)
     stopTrainingButton.Text = "Stop Training"
     stopTrainingButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    stopTrainingButton.TextSize = 16
+    stopTrainingButton.TextSize = 14
     stopTrainingButton.Font = Enum.Font.GothamBold
     stopTrainingButton.Parent = mainFrame
     
@@ -403,7 +417,7 @@ local function CreateTrainingGUI(char, rp)
     uiCorner.CornerRadius = UDim.new(0, 8)
     uiCorner.Parent = mainFrame
     
-    for _, button in pairs({trainVsCloneButton, trainVsPlayersButton, stopTrainingButton}) do
+    for _, button in pairs({trainVsCloneButton, trainVsPlayersButton, selfPlayButton, stopTrainingButton}) do
         local buttonCorner = Instance.new("UICorner")
         buttonCorner.CornerRadius = UDim.new(0, 6)
         buttonCorner.Parent = button
@@ -501,6 +515,22 @@ local function CreateTrainingGUI(char, rp)
         print("Training mode enabled: AI vs Players")
         trainVsPlayersButton.Text = "✓ Training vs Players"
         trainVsPlayersButton.BackgroundColor3 = Color3.fromRGB(100, 150, 255)
+    end)
+    
+    -- Self-Play Toggle Button Handler
+    selfPlayButton.MouseButton1Click:Connect(function()
+        AI.SelfPlaySystem.enabled = not AI.SelfPlaySystem.enabled
+        
+        if AI.SelfPlaySystem.enabled then
+            selfPlayButton.Text = "Self-Play: ON 🤖"
+            selfPlayButton.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
+            AI.DeepLearning.InitializeSelfPlay()
+            print("🤖 Self-Play System ENABLED - Clone will use best weights (AlphaGo-style training)")
+        else
+            selfPlayButton.Text = "Self-Play: OFF"
+            selfPlayButton.BackgroundColor3 = Color3.fromRGB(150, 100, 200)
+            print("Self-Play System DISABLED")
+        end
     end)
     
     stopTrainingButton.MouseButton1Click:Connect(function()
@@ -1881,8 +1911,13 @@ local function initializeCombatSystem(character)
 
   -- Initialize Deep Neural Networks
   InitializeDeepNetworks()
+  
+  -- Initialize self-play system if enabled
+  if AI.SelfPlaySystem.enabled then
+      AI.DeepLearning.InitializeSelfPlay()
+  end
 
-  print(`Initializing Project Deep Apex Elite (V37.3) for {player.Name}... Character: {AI.IdentifiedCharacter}. Deep Neural Network, Dueling DQN, Actor-Critic, ICM Curiosity, Distributional RL, Attention Mechanism, LSTM Opponent Modeling & Enhanced Combo System with Superior Prediction active.`)
+  print(`Initializing Project Deep Apex Elite (V37.3) for {player.Name}... Character: {AI.IdentifiedCharacter}. Deep Neural Network, Dueling DQN, Actor-Critic, ICM Curiosity, Distributional RL, Attention Mechanism, LSTM Opponent Modeling, Win Probability Estimator & Self-Play System active.`)
 
   --// ================= CORE AI LOGIC ================= //
 
@@ -2653,6 +2688,128 @@ local function initializeCombatSystem(character)
       if CONST.DEBUG_MODE then
           print(string.format("Match ended: %s. Trained Win Probability Estimator.", wonMatch and "WON" or "LOST"))
       end
+  end
+
+  --// --- SELF-PLAY SYSTEM FUNCTIONS ---
+  
+  -- Deep copy a weight table (for saving best weights)
+  local function DeepCopyWeights(original)
+      if type(original) ~= "table" then return original end
+      local copy = {}
+      for k, v in pairs(original) do
+          copy[k] = DeepCopyWeights(v)
+      end
+      return copy
+  end
+  
+  -- Save current weights as "best" weights
+  function AI.DeepLearning.SaveBestWeights()
+      if not AI.SelfPlaySystem.enabled then return end
+      
+      -- Deep copy all learnable weights
+      AI.SelfPlaySystem.bestWeights = {
+          ActionStats = DeepCopyWeights(AI.ActionStats),
+          QNetworkB = DeepCopyWeights(AI.QNetworkB),
+          DeepNetworkWeights = {
+              valueNet = DeepCopyWeights(AI.DeepNetwork.valueNet),
+              advantageNet = DeepCopyWeights(AI.DeepNetwork.advantageNet),
+              policyNet = DeepCopyWeights(AI.DeepNetwork.policyNet),
+          },
+          FeatureWeights = DeepCopyWeights(AI.FeatureWeights),
+          version = AI.SelfPlaySystem.currentVersion
+      }
+      
+      AI.SelfPlaySystem.bestWeightsVersion = AI.SelfPlaySystem.currentVersion
+      AI.SelfPlaySystem.lastSaveTime = os.clock()
+      
+      print(string.format("💾 Best weights saved (Version %d). Win rate: %.1f%%", 
+          AI.SelfPlaySystem.bestWeightsVersion,
+          (AI.SelfPlaySystem.winsVsBest / math.max(1, AI.SelfPlaySystem.matchesVsBest)) * 100))
+  end
+  
+  -- Load best weights into clone AI brain
+  function AI.DeepLearning.LoadBestWeightsIntoClone(cloneAI)
+      if not AI.SelfPlaySystem.enabled or not AI.SelfPlaySystem.bestWeights then 
+          return false
+      end
+      
+      -- Copy best weights to clone's AI brain
+      if cloneAI and cloneAI.ActionStats and AI.SelfPlaySystem.bestWeights.ActionStats then
+          cloneAI.ActionStats = DeepCopyWeights(AI.SelfPlaySystem.bestWeights.ActionStats)
+          cloneAI.QNetworkB = DeepCopyWeights(AI.SelfPlaySystem.bestWeights.QNetworkB)
+          cloneAI.FeatureWeights = DeepCopyWeights(AI.SelfPlaySystem.bestWeights.FeatureWeights)
+          
+          print(string.format("✨ Clone loaded best weights (Version %d) for shadow boxing", 
+              AI.SelfPlaySystem.bestWeightsVersion))
+          return true
+      end
+      
+      return false
+  end
+  
+  -- Update self-play statistics after match
+  function AI.DeepLearning.UpdateSelfPlayStats(wonMatch)
+      if not AI.SelfPlaySystem.enabled then return end
+      if not TrainingMode.enabled or not TrainingMode.trainingAgainstClone then return end
+      
+      AI.SelfPlaySystem.matchesVsBest += 1
+      if wonMatch then
+          AI.SelfPlaySystem.winsVsBest += 1
+      end
+      
+      local winRate = AI.SelfPlaySystem.winsVsBest / AI.SelfPlaySystem.matchesVsBest
+      
+      if CONST.DEBUG_MODE then
+          print(string.format("Self-Play Stats: %d/%d wins (%.1f%% win rate)", 
+              AI.SelfPlaySystem.winsVsBest, AI.SelfPlaySystem.matchesVsBest, winRate * 100))
+      end
+      
+      -- Check if we should promote current weights to "best"
+      if AI.SelfPlaySystem.matchesVsBest >= 10 then -- Need at least 10 matches
+          if winRate >= AI.SelfPlaySystem.winRateThreshold then
+              print(string.format("🏆 NEW BEST! Win rate %.1f%% > %.0f%%. Promoting to best weights.", 
+                  winRate * 100, AI.SelfPlaySystem.winRateThreshold * 100))
+              
+              AI.SelfPlaySystem.currentVersion += 1
+              AI.DeepLearning.SaveBestWeights()
+              
+              -- Reset stats for next evaluation period
+              AI.SelfPlaySystem.matchesVsBest = 0
+              AI.SelfPlaySystem.winsVsBest = 0
+              
+              -- Recreate clone with new best weights
+              if TrainingMode.trainingAgainstClone and TrainingMode.cloneCharacter then
+                  print("Recreating clone with newly promoted best weights...")
+                  task.spawn(function()
+                      task.wait(2) -- Brief delay
+                      local success, err = pcall(function()
+                          if rootPart and rootPart.Parent then
+                              CreateAIClone()
+                          end
+                      end)
+                      if not success then
+                          warn("Failed to recreate clone:", err)
+                      end
+                  end)
+              end
+          elseif AI.SelfPlaySystem.matchesVsBest >= 20 then
+              -- After 20 matches with < 60% win rate, reset for fresh evaluation
+              print(string.format("Reset self-play stats. Win rate %.1f%% did not reach threshold.", winRate * 100))
+              AI.SelfPlaySystem.matchesVsBest = 0
+              AI.SelfPlaySystem.winsVsBest = 0
+          end
+      end
+  end
+  
+  -- Initialize self-play system with current weights as baseline
+  function AI.DeepLearning.InitializeSelfPlay()
+      if not AI.SelfPlaySystem.enabled then return end
+      
+      -- Save current weights as baseline "best"
+      AI.SelfPlaySystem.currentVersion = 1
+      AI.DeepLearning.SaveBestWeights()
+      
+      print("🤖 Self-Play System initialized. Clone will use best weights for shadow boxing training.")
   end
 
   --// --- LEARNING MODULE ---
@@ -4298,8 +4455,17 @@ local function initializeCombatSystem(character)
               cachedPredictedPos = nil,
               lastPredictionTime = 0,
               lastTargetVelocity = nil,
-          }
+          },
+          -- Add learning structures for self-play
+          ActionStats = nil, -- Will be loaded from best weights
+          QNetworkB = nil,
+          FeatureWeights = nil,
       }
+      
+      -- Load best weights into clone for shadow boxing (AlphaGo-style self-play)
+      if AI.SelfPlaySystem.enabled then
+          AI.DeepLearning.LoadBestWeightsIntoClone(TrainingMode.cloneAI)
+      end
       
       local cloneState = TrainingMode.cloneAI.State
       
@@ -4672,6 +4838,8 @@ local function initializeCombatSystem(character)
               -- Train Win Probability Estimator on match victory
               if AI.WinProbabilityEstimator.enabled then
                   AI.DeepLearning.TrainOnMatchEnd(true) -- We won
+                  -- Update self-play statistics if training against clone
+                  AI.DeepLearning.UpdateSelfPlayStats(true)
               end
               -- Save character model on successful elimination
               AI.Learning.SaveCharacterModel()
@@ -5281,6 +5449,8 @@ local function initializeCombatSystem(character)
       if AI.WinProbabilityEstimator.enabled then
           AI.DeepLearning.TrainOnMatchEnd(false) -- We lost
       end
+      -- Update self-play statistics if training against clone
+      AI.DeepLearning.UpdateSelfPlayStats(false)
       Cleanup()
   end))
   table.insert(connections, character.AncestryChanged:Connect(function(_, parent)
