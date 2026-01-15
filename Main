@@ -520,12 +520,20 @@ local function CreateTrainingGUI(char, rp)
     
     -- Self-Play Toggle Button Handler
     selfPlayButton.MouseButton1Click:Connect(function()
+        -- Safety check: ensure AI exists before accessing
+        if not AI or not AI.SelfPlaySystem then
+            warn("AI system or SelfPlaySystem not initialized yet. Please wait.")
+            return
+        end
+        
         AI.SelfPlaySystem.enabled = not AI.SelfPlaySystem.enabled
         
         if AI.SelfPlaySystem.enabled then
             selfPlayButton.Text = "Self-Play: ON 🤖"
             selfPlayButton.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
-            AI.DeepLearning.InitializeSelfPlay()
+            if AI.DeepLearning and AI.DeepLearning.InitializeSelfPlay then
+                AI.DeepLearning.InitializeSelfPlay()
+            end
             print("🤖 Self-Play System ENABLED - Clone will use best weights (AlphaGo-style training)")
         else
             selfPlayButton.Text = "Self-Play: OFF"
@@ -674,7 +682,7 @@ local function CreateESPAndDebugHUD()
     
     -- Function to update HUD
     local function UpdateHUD()
-        if AI.State then
+        if AI and AI.State then
             stateLabel.Text = "State: " .. (AI.State.combatState or "IDLE")
             
             -- Show tactic with win probability if available
@@ -742,7 +750,8 @@ local function CreateESPAndDebugHUD()
                     espBox.Parent = billboard
                     
                     -- Determine threat level and color
-                    local isCurrentTarget = AI.State.currentTarget == targetChar
+                    local aiState = AI and AI.State
+                    local isCurrentTarget = aiState and aiState.currentTarget == targetChar
                     local distance = (player.Character and player.Character:FindFirstChild("HumanoidRootPart")) and
                                      (player.Character.HumanoidRootPart.Position - targetRoot.Position).Magnitude or 999
                     
@@ -753,7 +762,7 @@ local function CreateESPAndDebugHUD()
                     elseif targetHumanoid.Health < targetHumanoid.MaxHealth * 0.3 then
                         threatColor = Color3.fromRGB(255, 150, 0) -- Orange for low HP
                         threatText = "⚠️ LOW HP"
-                    elseif AI.State and AI.State.targetIsRagdolled then
+                    elseif aiState and aiState.targetIsRagdolled then
                         threatColor = Color3.fromRGB(100, 255, 100) -- Green for stunned
                         threatText = "✓ STUNNED"
                     elseif distance < 50 then
