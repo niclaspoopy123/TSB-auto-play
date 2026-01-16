@@ -3,6 +3,34 @@
 ## Overview
 This document summarizes the comprehensive improvements made to the TSB Auto-Play AI combat bot script to make it better.
 
+## Bug Fixes (Latest)
+
+### **Fixed DataStore Client Access Error** 🔧 (Critical Fix)
+Fixed runtime error: "DataStore can't be accessed from client" at line 1608
+
+**Problem:**
+- Script was attempting to access `DataStoreService` from a LocalScript (client-side)
+- Roblox restricts DataStore access to server-side scripts only for security
+- Caused immediate script failure on execution
+
+**Solution:**
+- Removed `DataStoreService` import from client script
+- Removed `AIDataStore`, `SaveAIWeights()`, and `LoadAIWeights()` functions
+- Removed all calls to DataStore functions (4 locations)
+- Added explanatory comments about client-side limitation
+
+**Impact:**
+- ✅ Script now runs without errors
+- ✅ AI learning still persists within the current session
+- ℹ️ Cross-session persistence requires server-side implementation
+- Note: For true persistence, implement server-side DataStore handling with RemoteEvents
+
+**Files Changed:**
+- Main script: -116 lines (removed DataStore code)
+- Updated initialization message to reflect session-based learning
+
+---
+
 ## Major Feature Updates (V40.0 - PROJECT ALPHA ELITE) 🧠🏆✨
 
 ### 1. **Win Probability Estimator (Meta-Controller)** ⚡ NEW

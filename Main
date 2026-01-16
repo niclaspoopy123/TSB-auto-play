@@ -105,7 +105,6 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 local LogService = game:GetService("LogService")
-local DataStoreService = game:GetService("DataStoreService")
 
 --// ================= LOCAL PLAYER ================= //
 local player = Players.LocalPlayer
@@ -1604,118 +1603,9 @@ end
 
 --// ================= DATASTORE PERSISTENCE ================= //
 
--- DataStore for persistent AI learning
-local AIDataStore = DataStoreService:GetDataStore("TSB_AI_Learning_V1")
-local SAVE_COOLDOWN = 60 -- Save at most once per minute
-local lastSaveTime = 0
-
--- Serialize weights for DataStore (removes functions and non-serializable data)
-local function SerializeWeights(weights)
-    local serialized = {}
-    for key, value in pairs(weights) do
-        if type(value) == "number" or type(value) == "boolean" or type(value) == "string" then
-            serialized[key] = value
-        elseif type(value) == "table" then
-            serialized[key] = SerializeWeights(value)
-        end
-    end
-    return serialized
-end
-
--- Save AI weights to DataStore
-local function SaveAIWeights()
-    local now = os.clock()
-    if now - lastSaveTime < SAVE_COOLDOWN then
-        return -- Too soon since last save
-    end
-    
-    local success, err = pcall(function()
-        local dataToSave = {
-            FeatureWeights = SerializeWeights(AI.FeatureWeights),
-            OpponentModel = {
-                perOpponentWeights = SerializeWeights(AI.OpponentModel.perOpponentWeights),
-            },
-            DynamicDifficulty = {
-                matchHistory = AI.DynamicDifficulty.matchHistory,
-                currentWinRate = AI.DynamicDifficulty.currentWinRate,
-                difficultyMode = AI.DynamicDifficulty.difficultyMode,
-            },
-            BaitLearning = SerializeWeights(AI.BaitLearning),
-            ZoneAdaptation = {
-                damageByDistance = SerializeWeights(AI.ZoneAdaptation.damageByDistance),
-                optimalZone = AI.ZoneAdaptation.optimalZone,
-            },
-            timestamp = os.time(),
-        }
-        
-        local key = "Player_" .. player.UserId
-        AIDataStore:SetAsync(key, dataToSave)
-        lastSaveTime = now
-        print("💾 AI weights saved to DataStore")
-    end)
-    
-    if not success then
-        warn("Failed to save AI weights:", err)
-    end
-end
-
--- Load AI weights from DataStore
-local function LoadAIWeights()
-    local success, data = pcall(function()
-        local key = "Player_" .. player.UserId
-        return AIDataStore:GetAsync(key)
-    end)
-    
-    if success and data then
-        -- Restore FeatureWeights
-        if data.FeatureWeights then
-            for key, value in pairs(data.FeatureWeights) do
-                if AI.FeatureWeights[key] ~= nil then
-                    AI.FeatureWeights[key] = value
-                end
-            end
-            print("✅ FeatureWeights loaded from DataStore")
-        end
-        
-        -- Restore OpponentModel weights
-        if data.OpponentModel and data.OpponentModel.perOpponentWeights then
-            AI.OpponentModel.perOpponentWeights = data.OpponentModel.perOpponentWeights
-            print("✅ Opponent-specific weights loaded from DataStore")
-        end
-        
-        -- Restore DDA state
-        if data.DynamicDifficulty then
-            AI.DynamicDifficulty.matchHistory = data.DynamicDifficulty.matchHistory or {}
-            AI.DynamicDifficulty.currentWinRate = data.DynamicDifficulty.currentWinRate or 0
-            AI.DynamicDifficulty.difficultyMode = data.DynamicDifficulty.difficultyMode or "Normal"
-            print("✅ DDA state loaded from DataStore")
-        end
-        
-        -- Restore Bait Learning
-        if data.BaitLearning then
-            for key, value in pairs(data.BaitLearning) do
-                if AI.BaitLearning[key] ~= nil then
-                    AI.BaitLearning[key] = value
-                end
-            end
-            print("✅ Bait learning data loaded from DataStore")
-        end
-        
-        -- Restore Zone Adaptation
-        if data.ZoneAdaptation then
-            AI.ZoneAdaptation.damageByDistance = data.ZoneAdaptation.damageByDistance or {}
-            AI.ZoneAdaptation.optimalZone = data.ZoneAdaptation.optimalZone or 30
-            print("✅ Zone adaptation loaded from DataStore")
-        end
-        
-        local daysSinceLastSave = data.timestamp and (os.time() - data.timestamp) / 86400 or 0
-        print(string.format("📊 AI memory restored (Last save: %.1f days ago)", daysSinceLastSave))
-    elseif not success then
-        warn("Failed to load AI weights:", data)
-    else
-        print("ℹ️ No saved AI weights found. Starting fresh.")
-    end
-end
+-- Note: DataStore persistence has been removed as it cannot be accessed from client-side scripts.
+-- AI learning data persists within the current session only.
+-- For cross-session persistence, implement server-side DataStore handling.
 
 --// ================= CORE INITIALIZATION ================= //
 
@@ -2094,15 +1984,15 @@ local function initializeCombatSystem(character)
   -- Initialize Deep Neural Networks
   InitializeDeepNetworks()
   
-  -- Load AI weights from DataStore (persistent learning)
-  LoadAIWeights()
+  -- Note: DataStore persistence removed (client-side limitation)
+  -- AI learning persists within session only
   
   -- Initialize self-play system if enabled
   if AI.SelfPlaySystem.enabled then
       AI.DeepLearning.InitializeSelfPlay()
   end
 
-  print(`Initializing Project Deep Apex Elite (V37.3+Adaptive) for {player.Name}... Character: {AI.IdentifiedCharacter}. Enhanced with: DataStore Persistence, Adaptive Learning Rates, Opponent-Specific Weights, Momentum Adaptation, DDA, Bait Learning, Resource Awareness & Zone Adaptation.`)
+  print(`Initializing Project Deep Apex Elite (V37.3+Adaptive) for {player.Name}... Character: {AI.IdentifiedCharacter}. Enhanced with: Session-Based Learning, Adaptive Learning Rates, Opponent-Specific Weights, Momentum Adaptation, DDA, Bait Learning, Resource Awareness & Zone Adaptation.`)
 
   --// ================= CORE AI LOGIC ================= //
 
@@ -5329,8 +5219,6 @@ local function initializeCombatSystem(character)
               end
               -- Save character model on successful elimination
               AI.Learning.SaveCharacterModel()
-              -- Save AI weights periodically
-              SaveAIWeights()
           end)
       end
 
@@ -5441,8 +5329,6 @@ local function initializeCombatSystem(character)
           if not AI.State.lastModelSaveTrials or AI.State.lastModelSaveTrials ~= AI.ActionStats.totalTrials then
               AI.Learning.SaveCharacterModel()
               AI.State.lastModelSaveTrials = AI.ActionStats.totalTrials
-              -- Also try to save AI weights
-              SaveAIWeights()
           end
       end
       
@@ -6006,8 +5892,6 @@ local function initializeCombatSystem(character)
       end
       -- Update self-play statistics if training against clone
       AI.DeepLearning.UpdateSelfPlayStats(false)
-      -- Save AI weights before cleanup
-      SaveAIWeights()
       Cleanup()
   end))
   table.insert(connections, character.AncestryChanged:Connect(function(_, parent)
