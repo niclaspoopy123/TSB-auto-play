@@ -105,6 +105,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 local LogService = game:GetService("LogService")
+local DataStoreService = game:GetService("DataStoreService")
 
 --// ================= LOCAL PLAYER ================= //
 local player = Players.LocalPlayer
@@ -863,6 +864,11 @@ local AI = {
       maxHistorySize = 20,
       predictedNextAction = "ATTACK",
       aggressionScore = 0.5,
+      -- Per-opponent feature weights (moved from global FeatureWeights)
+      perOpponentWeights = {}, -- Format: ["PlayerName"] = { healthDiff = 1.0, ... }
+      currentOpponentName = nil,
+      -- Active weights pointer (points to current opponent's weights)
+      activeWeights = nil,
   },
   --// OPPONENT BEHAVIOR MODELING (COUNTER-AI): Markov Chain for sequence prediction
   OpponentBehaviorModel = {
@@ -919,6 +925,67 @@ local AI = {
       performanceTrend = 0,
       learningRateStability = 0, -- Track stability of learning
       consecutiveImprovements = 0, -- Track improvement streaks
+      -- Volatility tracking for adaptive learning rates
+      volatilityWindow = {}, -- Recent behavior changes
+      maxVolatilityHistory = 30,
+      currentVolatility = 0, -- 0-1, how unpredictable opponent is
+      baseSuccessMultiplier = 1.08, -- Default success multiplier
+      baseDecayMultiplier = 0.995, -- Default decay multiplier
+      adaptiveSuccessMultiplier = 1.08, -- Adjusted based on volatility
+      adaptiveDecayMultiplier = 0.995, -- Adjusted based on volatility
+  },
+  --// DYNAMIC DIFFICULTY ADJUSTMENT: Adapt to player skill level
+  DynamicDifficulty = {
+      enabled = true,
+      matchHistory = {}, -- Recent match results
+      maxMatchHistory = 20,
+      currentWinRate = 0,
+      dominatingThreshold = 0.80, -- > 80% win rate
+      losingThreshold = 0.40, -- < 40% win rate
+      difficultyMode = "Normal", -- "Normal", "StylePoints", "Tryhard"
+      reactionSpeedModifier = 1.0, -- 1.0 = normal, < 1.0 = slower, > 1.0 = faster
+      timingWindowModifier = 1.0, -- 1.0 = normal, < 1.0 = tighter, > 1.0 = looser
+      riskTolerance = 1.0, -- 1.0 = normal, > 1.0 = more risky combos
+  },
+  --// BAIT & PUNISH LEARNING: Track feint effectiveness
+  BaitLearning = {
+      feintSuccessRate = 0.5, -- Initial 50% assumed success
+      totalFeints = 0,
+      successfulFeints = 0,
+      opponentReactedToFeint = 0, -- Count reactions
+      opponentIgnoredFeint = 0, -- Count ignores
+      shouldUseBaits = true, -- Dynamic enable/disable
+      confidenceThreshold = 0.3, -- Stop baiting if success < 30%
+  },
+  --// RESOURCE AWARENESS: Track opponent cooldowns and resources
+  ResourceAwareness = {
+      opponentLastDash = 0,
+      opponentLastEscape = 0,
+      opponentLastSpecial = 0,
+      estimatedDashCooldown = 2.0, -- Estimated opponent dash CD
+      estimatedEscapeCooldown = 5.0, -- Estimated opponent escape CD
+      estimatedSpecialCooldown = 3.0, -- Estimated opponent special CD
+      aggressionBoostMultiplier = 3.0, -- Boost when opponent out of resources
+      isOpponentVulnerable = false, -- No escapes available
+  },
+  --// ZONE ADAPTATION: Learn optimal spacing
+  ZoneAdaptation = {
+      enabled = true,
+      damageByDistance = {}, -- Track damage dealt at different ranges
+      deathByDistance = {}, -- Track times we died at different ranges
+      distanceBuckets = {0, 15, 30, 50, 75, 100}, -- Distance ranges
+      optimalZone = 30, -- Current best zone (starts at attack range)
+      cornerDamageMultiplier = 1.0, -- Learn if corners are good/bad
+      openFieldDamageMultiplier = 1.0,
+  },
+  --// MOMENTUM-BASED ADAPTATION: Freeze learning during hot streaks
+  MomentumAdaptation = {
+      enabled = true,
+      hotStateThreshold = 4, -- consecutiveHits > 4 = hot state
+      isInHotState = false,
+      frozenFeatureWeights = nil, -- Snapshot of weights during hot state
+      hotStateStartTime = 0,
+      maxHotStateDuration = 10.0, -- Max 10s hot state
   },
   --// ANOMALY: Module for actively reading the game for glitches.
   GlitchScanner = {
@@ -1535,6 +1602,121 @@ local function CopyNetwork(source, target)
     end
 end
 
+--// ================= DATASTORE PERSISTENCE ================= //
+
+-- DataStore for persistent AI learning
+local AIDataStore = DataStoreService:GetDataStore("TSB_AI_Learning_V1")
+local SAVE_COOLDOWN = 60 -- Save at most once per minute
+local lastSaveTime = 0
+
+-- Serialize weights for DataStore (removes functions and non-serializable data)
+local function SerializeWeights(weights)
+    local serialized = {}
+    for key, value in pairs(weights) do
+        if type(value) == "number" or type(value) == "boolean" or type(value) == "string" then
+            serialized[key] = value
+        elseif type(value) == "table" then
+            serialized[key] = SerializeWeights(value)
+        end
+    end
+    return serialized
+end
+
+-- Save AI weights to DataStore
+local function SaveAIWeights()
+    local now = os.clock()
+    if now - lastSaveTime < SAVE_COOLDOWN then
+        return -- Too soon since last save
+    end
+    
+    local success, err = pcall(function()
+        local dataToSave = {
+            FeatureWeights = SerializeWeights(AI.FeatureWeights),
+            OpponentModel = {
+                perOpponentWeights = SerializeWeights(AI.OpponentModel.perOpponentWeights),
+            },
+            DynamicDifficulty = {
+                matchHistory = AI.DynamicDifficulty.matchHistory,
+                currentWinRate = AI.DynamicDifficulty.currentWinRate,
+                difficultyMode = AI.DynamicDifficulty.difficultyMode,
+            },
+            BaitLearning = SerializeWeights(AI.BaitLearning),
+            ZoneAdaptation = {
+                damageByDistance = SerializeWeights(AI.ZoneAdaptation.damageByDistance),
+                optimalZone = AI.ZoneAdaptation.optimalZone,
+            },
+            timestamp = os.time(),
+        }
+        
+        local key = "Player_" .. player.UserId
+        AIDataStore:SetAsync(key, dataToSave)
+        lastSaveTime = now
+        print("💾 AI weights saved to DataStore")
+    end)
+    
+    if not success then
+        warn("Failed to save AI weights:", err)
+    end
+end
+
+-- Load AI weights from DataStore
+local function LoadAIWeights()
+    local success, data = pcall(function()
+        local key = "Player_" .. player.UserId
+        return AIDataStore:GetAsync(key)
+    end)
+    
+    if success and data then
+        -- Restore FeatureWeights
+        if data.FeatureWeights then
+            for key, value in pairs(data.FeatureWeights) do
+                if AI.FeatureWeights[key] ~= nil then
+                    AI.FeatureWeights[key] = value
+                end
+            end
+            print("✅ FeatureWeights loaded from DataStore")
+        end
+        
+        -- Restore OpponentModel weights
+        if data.OpponentModel and data.OpponentModel.perOpponentWeights then
+            AI.OpponentModel.perOpponentWeights = data.OpponentModel.perOpponentWeights
+            print("✅ Opponent-specific weights loaded from DataStore")
+        end
+        
+        -- Restore DDA state
+        if data.DynamicDifficulty then
+            AI.DynamicDifficulty.matchHistory = data.DynamicDifficulty.matchHistory or {}
+            AI.DynamicDifficulty.currentWinRate = data.DynamicDifficulty.currentWinRate or 0
+            AI.DynamicDifficulty.difficultyMode = data.DynamicDifficulty.difficultyMode or "Normal"
+            print("✅ DDA state loaded from DataStore")
+        end
+        
+        -- Restore Bait Learning
+        if data.BaitLearning then
+            for key, value in pairs(data.BaitLearning) do
+                if AI.BaitLearning[key] ~= nil then
+                    AI.BaitLearning[key] = value
+                end
+            end
+            print("✅ Bait learning data loaded from DataStore")
+        end
+        
+        -- Restore Zone Adaptation
+        if data.ZoneAdaptation then
+            AI.ZoneAdaptation.damageByDistance = data.ZoneAdaptation.damageByDistance or {}
+            AI.ZoneAdaptation.optimalZone = data.ZoneAdaptation.optimalZone or 30
+            print("✅ Zone adaptation loaded from DataStore")
+        end
+        
+        local daysSinceLastSave = data.timestamp and (os.time() - data.timestamp) / 86400 or 0
+        print(string.format("📊 AI memory restored (Last save: %.1f days ago)", daysSinceLastSave))
+    elseif not success then
+        warn("Failed to load AI weights:", data)
+    else
+        print("ℹ️ No saved AI weights found. Starting fresh.")
+    end
+end
+
 --// ================= CORE INITIALIZATION ================= //
 
 -- This function runs when the player's character is added to the game.
@@ -1912,12 +2094,15 @@ local function initializeCombatSystem(character)
   -- Initialize Deep Neural Networks
   InitializeDeepNetworks()
   
+  -- Load AI weights from DataStore (persistent learning)
+  LoadAIWeights()
+  
   -- Initialize self-play system if enabled
   if AI.SelfPlaySystem.enabled then
       AI.DeepLearning.InitializeSelfPlay()
   end
 
-  print(`Initializing Project Deep Apex Elite (V37.3) for {player.Name}... Character: {AI.IdentifiedCharacter}. Deep Neural Network, Dueling DQN, Actor-Critic, ICM Curiosity, Distributional RL, Attention Mechanism, LSTM Opponent Modeling, Win Probability Estimator & Self-Play System active.`)
+  print(`Initializing Project Deep Apex Elite (V37.3+Adaptive) for {player.Name}... Character: {AI.IdentifiedCharacter}. Enhanced with: DataStore Persistence, Adaptive Learning Rates, Opponent-Specific Weights, Momentum Adaptation, DDA, Bait Learning, Resource Awareness & Zone Adaptation.`)
 
   --// ================= CORE AI LOGIC ================= //
 
@@ -3624,6 +3809,245 @@ local function initializeCombatSystem(character)
       
       return expectedReward
   end
+  
+  --// ================= ADAPTIVE LEARNING ENHANCEMENTS ================= //
+  
+  -- Get or create opponent-specific feature weights
+  function AI.Learning.GetOpponentWeights(opponentName)
+      local model = AI.OpponentModel
+      
+      if not model.perOpponentWeights[opponentName] then
+          -- Initialize new opponent weights with defaults
+          model.perOpponentWeights[opponentName] = {
+              healthDiff = 1.0,
+              distanceToTarget = 1.0,
+              energyLevel = 1.0,
+              velocityMatch = 1.0,
+              tacticSuccess = 1.0,
+              comboDensity = 1.0,
+              threatLevel = 1.0,
+              opportunityWindow = 1.0,
+          }
+          print(`🆕 Created feature weights for opponent: {opponentName}`)
+      end
+      
+      return model.perOpponentWeights[opponentName]
+  end
+  
+  -- Set active opponent and load their weights
+  function AI.Learning.SetActiveOpponent(opponentName)
+      if opponentName and opponentName ~= AI.OpponentModel.currentOpponentName then
+          AI.OpponentModel.currentOpponentName = opponentName
+          AI.OpponentModel.activeWeights = AI.Learning.GetOpponentWeights(opponentName)
+          print(`🎯 Switched to opponent: {opponentName}`)
+      end
+  end
+  
+  -- Update volatility tracker for adaptive learning rates
+  function AI.Learning.UpdateVolatility(behaviorChange)
+      local meta = AI.MetaLearning
+      
+      -- Add behavior change to window
+      table.insert(meta.volatilityWindow, behaviorChange)
+      if #meta.volatilityWindow > meta.maxVolatilityHistory then
+          table.remove(meta.volatilityWindow, 1)
+      end
+      
+      -- Calculate average volatility (0-1)
+      local totalChange = 0
+      for _, change in ipairs(meta.volatilityWindow) do
+          totalChange += change
+      end
+      meta.currentVolatility = totalChange / math.max(1, #meta.volatilityWindow)
+      
+      -- Adjust learning rate multipliers based on volatility
+      if meta.currentVolatility > 0.6 then
+          -- High volatility: increase learning rate to adapt faster
+          meta.adaptiveSuccessMultiplier = 1.15 -- Was 1.08
+          meta.adaptiveDecayMultiplier = 0.990 -- Was 0.995
+      elseif meta.currentVolatility < 0.3 then
+          -- Low volatility (predictable): lower learning rate to stabilize
+          meta.adaptiveSuccessMultiplier = 1.04 -- Was 1.08
+          meta.adaptiveDecayMultiplier = 0.998 -- Was 0.995
+      else
+          -- Normal volatility: use base rates
+          meta.adaptiveSuccessMultiplier = meta.baseSuccessMultiplier
+          meta.adaptiveDecayMultiplier = meta.baseDecayMultiplier
+      end
+  end
+  
+  -- Update momentum-based adaptation (hot state detection)
+  function AI.Learning.UpdateMomentumState(consecutiveHits)
+      local momentum = AI.MomentumAdaptation
+      if not momentum.enabled then return end
+      
+      local now = os.clock()
+      
+      -- Enter hot state
+      if consecutiveHits > momentum.hotStateThreshold and not momentum.isInHotState then
+          momentum.isInHotState = true
+          momentum.hotStateStartTime = now
+          -- Freeze current feature weights
+          momentum.frozenFeatureWeights = {}
+          local activeWeights = AI.OpponentModel.activeWeights or AI.FeatureWeights
+          for key, value in pairs(activeWeights) do
+              momentum.frozenFeatureWeights[key] = value
+          end
+          print(`🔥 HOT STATE ACTIVATED! Freezing weights (${consecutiveHits} consecutive hits)`)
+      end
+      
+      -- Exit hot state (combo dropped or timeout)
+      if momentum.isInHotState then
+          local shouldExit = consecutiveHits <= momentum.hotStateThreshold or 
+                             (now - momentum.hotStateStartTime) > momentum.maxHotStateDuration
+          if shouldExit then
+              momentum.isInHotState = false
+              momentum.frozenFeatureWeights = nil
+              print(`❄️ HOT STATE ENDED. Resuming normal adaptation.`)
+          end
+      end
+  end
+  
+  -- Update Dynamic Difficulty Adjustment
+  function AI.Learning.UpdateDDA(wonMatch)
+      local dda = AI.DynamicDifficulty
+      if not dda.enabled then return end
+      
+      -- Record match result
+      table.insert(dda.matchHistory, wonMatch and 1 or 0)
+      if #dda.matchHistory > dda.maxMatchHistory then
+          table.remove(dda.matchHistory, 1)
+      end
+      
+      -- Calculate win rate
+      local wins = 0
+      for _, result in ipairs(dda.matchHistory) do
+          wins += result
+      end
+      dda.currentWinRate = wins / #dda.matchHistory
+      
+      -- Adjust difficulty mode
+      if dda.currentWinRate >= dda.dominatingThreshold then
+          -- Dominating: reduce AI effectiveness for engagement
+          dda.difficultyMode = "StylePoints"
+          dda.reactionSpeedModifier = 0.85 -- 15% slower reactions
+          dda.timingWindowModifier = 1.15 -- 15% looser timing
+          dda.riskTolerance = 1.5 -- More risky combos
+          print(`📉 DDA: Style Points Mode (Win Rate: {string.format("%.1f", dda.currentWinRate * 100)}%)`)
+      elseif dda.currentWinRate <= dda.losingThreshold then
+          -- Losing: tighten up and try harder
+          dda.difficultyMode = "Tryhard"
+          dda.reactionSpeedModifier = 1.15 -- 15% faster reactions
+          dda.timingWindowModifier = 0.90 -- 10% tighter timing
+          dda.riskTolerance = 0.7 -- Safer combos
+          print(`📈 DDA: Tryhard Mode (Win Rate: {string.format("%.1f", dda.currentWinRate * 100)}%)`)
+      else
+          -- Balanced: normal difficulty
+          dda.difficultyMode = "Normal"
+          dda.reactionSpeedModifier = 1.0
+          dda.timingWindowModifier = 1.0
+          dda.riskTolerance = 1.0
+      end
+  end
+  
+  -- Update Bait & Punish learning
+  function AI.Learning.UpdateBaitLearning(feintSuccess, opponentReacted)
+      local bait = AI.BaitLearning
+      
+      bait.totalFeints += 1
+      if feintSuccess then
+          bait.successfulFeints += 1
+      end
+      
+      if opponentReacted then
+          bait.opponentReactedToFeint += 1
+      else
+          bait.opponentIgnoredFeint += 1
+      end
+      
+      -- Update success rate
+      bait.feintSuccessRate = bait.successfulFeints / math.max(1, bait.totalFeints)
+      
+      -- Decide if we should continue using baits
+      if bait.totalFeints >= 10 then -- Need sample size
+          bait.shouldUseBaits = bait.feintSuccessRate >= bait.confidenceThreshold
+          
+          if not bait.shouldUseBaits then
+              print(`🚫 FEINT disabled (Success: {string.format("%.1f", bait.feintSuccessRate * 100)}% < {bait.confidenceThreshold * 100}%)`)
+          end
+      end
+  end
+  
+  -- Track opponent resource usage
+  function AI.Learning.TrackOpponentResource(resourceType)
+      local res = AI.ResourceAwareness
+      local now = os.clock()
+      
+      if resourceType == "DASH" then
+          res.opponentLastDash = now
+      elseif resourceType == "ESCAPE" then
+          res.opponentLastEscape = now
+      elseif resourceType == "SPECIAL" then
+          res.opponentLastSpecial = now
+      end
+      
+      -- Check if opponent is vulnerable (no escape available)
+      local dashOnCooldown = (now - res.opponentLastDash) < res.estimatedDashCooldown
+      local escapeOnCooldown = (now - res.opponentLastEscape) < res.estimatedEscapeCooldown
+      res.isOpponentVulnerable = dashOnCooldown and escapeOnCooldown
+      
+      if res.isOpponentVulnerable then
+          print(`⚡ OPPONENT VULNERABLE! No escape available.`)
+      end
+  end
+  
+  -- Update zone adaptation (track damage by distance)
+  function AI.Learning.UpdateZoneAdaptation(distance, damageDealt, died)
+      local zone = AI.ZoneAdaptation
+      if not zone.enabled then return end
+      
+      -- Find distance bucket
+      local bucket = nil
+      for i = #zone.distanceBuckets, 1, -1 do
+          if distance >= zone.distanceBuckets[i] then
+              bucket = zone.distanceBuckets[i]
+              break
+          end
+      end
+      
+      if not bucket then
+          bucket = zone.distanceBuckets[1]
+      end
+      
+      -- Track damage dealt at this distance
+      if damageDealt > 0 then
+          zone.damageByDistance[bucket] = (zone.damageByDistance[bucket] or 0) + damageDealt
+      end
+      
+      -- Track deaths at this distance (negative value)
+      if died then
+          zone.deathByDistance[bucket] = (zone.deathByDistance[bucket] or 0) + 1
+      end
+      
+      -- Find optimal zone (best damage, fewest deaths)
+      local bestScore = -math.huge
+      local bestZone = zone.optimalZone
+      for _, dist in ipairs(zone.distanceBuckets) do
+          local damage = zone.damageByDistance[dist] or 0
+          local deaths = zone.deathByDistance[dist] or 0
+          local score = damage - (deaths * 50) -- Each death = -50 score
+          
+          if score > bestScore then
+              bestScore = score
+              bestZone = dist
+          end
+      end
+      
+      if bestZone ~= zone.optimalZone then
+          zone.optimalZone = bestZone
+          print(`📍 Optimal zone updated: {bestZone} studs (Score: {string.format("%.0f", bestScore)})`)
+      end
+  end
 
   --// --- EVALUATION MODULE ---
   function AI.Evaluation.ChooseTactic(state)
@@ -4060,6 +4484,64 @@ local function initializeCombatSystem(character)
                       modifier *= 1.55
                   elseif action == "DASH" or action == "FEINT" then
                       modifier *= 1.3
+                  end
+              end
+              
+              -- NEW: Resource-Aware Aggression (Opponent cooldown tracking)
+              if AI.ResourceAwareness.isOpponentVulnerable and (action == "ATTACK" or action == "SPECIAL") then
+                  -- Opponent has no escape: massively boost aggression
+                  modifier *= AI.ResourceAwareness.aggressionBoostMultiplier
+                  if CONST.DEBUG_MODE then
+                      print(`🔥 Resource-Aware Boost: {action} x{AI.ResourceAwareness.aggressionBoostMultiplier} (Opponent vulnerable)`)
+                  end
+              end
+              
+              -- NEW: Bait & Punish Learning (Feint effectiveness)
+              if action == "FEINT" and not AI.BaitLearning.shouldUseBaits then
+                  -- Feints not working: reduce priority
+                  modifier *= 0.3
+              elseif action == "FEINT" and AI.BaitLearning.feintSuccessRate > 0.7 then
+                  -- Feints very effective: boost priority
+                  modifier *= 1.8
+              end
+              
+              -- NEW: Zone Adaptation (Distance-based strategy)
+              if AI.ZoneAdaptation.enabled then
+                  local currentDist = state.distance or 0
+                  local optimalDist = AI.ZoneAdaptation.optimalZone
+                  local distDiff = math.abs(currentDist - optimalDist)
+                  
+                  if distDiff > 20 then
+                      -- Too far from optimal zone: boost repositioning
+                      if action == "REPOSITION" or action == "DASH" then
+                          modifier *= 1.6
+                      end
+                  elseif distDiff < 10 then
+                      -- At optimal zone: boost attacks
+                      if action == "ATTACK" or action == "SPECIAL" then
+                          modifier *= 1.3
+                      end
+                  end
+              end
+              
+              -- NEW: Dynamic Difficulty Adjustment (DDA modifiers)
+              if AI.DynamicDifficulty.enabled then
+                  local dda = AI.DynamicDifficulty
+                  
+                  -- Apply reaction speed modifier to cooldown-dependent actions
+                  if dda.difficultyMode == "Tryhard" then
+                      -- Tryhard mode: tighter timing, safer choices
+                      if action == "EVADE" or action == "BLOCK" then
+                          modifier *= 1.2 -- More defensive
+                      end
+                  elseif dda.difficultyMode == "StylePoints" then
+                      -- Style mode: riskier, flashier combos
+                      if action == "FEINT" or (action == "SPECIAL" and inCombo) then
+                          modifier *= dda.riskTolerance -- Encourage risky plays
+                      end
+                      if action == "BLOCK" or action == "EVADE" then
+                          modifier *= 0.8 -- Less defensive
+                      end
                   end
               end
               
@@ -4822,10 +5304,12 @@ local function initializeCombatSystem(character)
           AI.State.currentTarget, AI.State.targetHumanoid, AI.State.targetTorso = bestTarget, targetHumanoid, bestTarget:FindFirstChild("Torso") or bestTarget:FindFirstChild("HumanoidRootPart")
           AI.State.lastTargetHealth = targetHumanoid and targetHumanoid.Health or 0
           
-          -- Set current opponent for behavior tracking
+          -- Set current opponent for behavior tracking and feature weights
           local targetPlayer = Players:GetPlayerFromCharacter(bestTarget)
           if targetPlayer then
               AI.OpponentBehaviorModel.currentOpponent = targetPlayer.Name
+              -- Load opponent-specific feature weights
+              AI.Learning.SetActiveOpponent(targetPlayer.Name)
               if CONST.DEBUG_MODE then
                   print(`Tracking opponent behavior: {targetPlayer.Name}`)
               end
@@ -4835,6 +5319,8 @@ local function initializeCombatSystem(character)
               AI.Score += 10
               print(`Target eliminated. New Score: {AI.Score}`)
               AI.State.currentTarget = nil
+              -- Update DDA on match end
+              AI.Learning.UpdateDDA(true) -- We won
               -- Train Win Probability Estimator on match victory
               if AI.WinProbabilityEstimator.enabled then
                   AI.DeepLearning.TrainOnMatchEnd(true) -- We won
@@ -4843,6 +5329,8 @@ local function initializeCombatSystem(character)
               end
               -- Save character model on successful elimination
               AI.Learning.SaveCharacterModel()
+              -- Save AI weights periodically
+              SaveAIWeights()
           end)
       end
 
@@ -4924,16 +5412,22 @@ local function initializeCombatSystem(character)
           if AI.State.isTargetAttacking and not wasAttacking then
               AI.Learning.UpdateOpponentModel("ATTACK")
               AI.Learning.UpdateOpponentBehaviorModel("ATTACK") -- New: Markov Chain tracking
+              AI.Learning.TrackOpponentResource("ATTACK") -- Track for resource awareness
               AI.State.lastOpponentAction = "ATTACK"
               AI.State.opponentActionTime = now
+              -- Track behavior change for volatility
+              AI.Learning.UpdateVolatility(0.3) -- Attack = moderate change
           elseif AI.State.targetTorso then
               local velocity = AI.State.targetTorso.AssemblyLinearVelocity
               local targetVelocity = velocity and velocity.Magnitude or 0
               if targetVelocity > 50 and now - AI.State.opponentActionTime > 0.5 then
                   AI.Learning.UpdateOpponentModel("EVADE")
                   AI.Learning.UpdateOpponentBehaviorModel("EVADE") -- New: Markov Chain tracking
+                  AI.Learning.TrackOpponentResource("DASH") -- Evade likely used dash
                   AI.State.lastOpponentAction = "EVADE"
                   AI.State.opponentActionTime = now
+                  -- Track behavior change for volatility
+                  AI.Learning.UpdateVolatility(0.6) -- Evade = high change
               end
           end
       else
@@ -4947,6 +5441,8 @@ local function initializeCombatSystem(character)
           if not AI.State.lastModelSaveTrials or AI.State.lastModelSaveTrials ~= AI.ActionStats.totalTrials then
               AI.Learning.SaveCharacterModel()
               AI.State.lastModelSaveTrials = AI.ActionStats.totalTrials
+              -- Also try to save AI weights
+              SaveAIWeights()
           end
       end
       
@@ -5029,6 +5525,15 @@ local function initializeCombatSystem(character)
           local currentDistance = (rootPart.Position - AI.State.targetTorso.Position).Magnitude
           local feintSucceeded = currentDistance > AI.State.distanceAtFeintStart + CONST.FEINT_SUCCESS_DISTANCE
           local reward = feintSucceeded and CONST.REWARD_FEINT_SUCCESS or CONST.PENALTY_FAILED_ACTION
+          
+          -- Check if opponent reacted to feint
+          local opponentReacted = AI.State.isTargetAttacking or 
+                                  (AI.State.lastOpponentAction and 
+                                   (AI.State.lastOpponentAction == "EVADE" or AI.State.lastOpponentAction == "BLOCK") and
+                                   now - AI.State.opponentActionTime < 0.5)
+          
+          -- Update bait learning
+          AI.Learning.UpdateBaitLearning(feintSucceeded, opponentReacted)
           
           -- Build current state for reinforcement
           local currentState = {
@@ -5155,19 +5660,55 @@ local function initializeCombatSystem(character)
           -- Extend combo window
           AI.State.comboStateEndTime = now + CONST.COMBO_WINDOW_DURATION
           
-          -- Adaptive feature weight tuning based on success
-          AI.FeatureWeights.tacticSuccess = math.min(2.5, AI.FeatureWeights.tacticSuccess * 1.08)
-          AI.FeatureWeights.comboDensity = math.min(2.0, AI.FeatureWeights.comboDensity * 1.05)
-          AI.FeatureWeights.opportunityWindow = math.min(2.2, AI.FeatureWeights.opportunityWindow * 1.06)
+          -- Update momentum-based adaptation (hot state tracking)
+          AI.Learning.UpdateMomentumState(AI.State.consecutiveHits)
           
-          -- Adjust feature weights based on context
-          if now < AI.State.punishWindowEndTime then
-              AI.FeatureWeights.opportunityWindow = math.min(2.5, AI.FeatureWeights.opportunityWindow * 1.1)
+          -- Get active weights (opponent-specific or frozen if in hot state)
+          local activeWeights = AI.FeatureWeights
+          if AI.MomentumAdaptation.isInHotState and AI.MomentumAdaptation.frozenFeatureWeights then
+              -- In hot state: don't update weights (use frozen)
+              activeWeights = AI.MomentumAdaptation.frozenFeatureWeights
+          elseif AI.OpponentModel.activeWeights then
+              -- Use opponent-specific weights
+              activeWeights = AI.OpponentModel.activeWeights
           end
+          
+          -- Only update weights if not in hot state
+          if not AI.MomentumAdaptation.isInHotState then
+              -- Get adaptive multipliers based on volatility
+              local successMult = AI.MetaLearning.adaptiveSuccessMultiplier
+              local decayMult = AI.MetaLearning.adaptiveDecayMultiplier
+              
+              -- Adaptive feature weight tuning based on success
+              activeWeights.tacticSuccess = math.min(2.5, activeWeights.tacticSuccess * successMult)
+              activeWeights.comboDensity = math.min(2.0, activeWeights.comboDensity * (successMult * 0.97))
+              activeWeights.opportunityWindow = math.min(2.2, activeWeights.opportunityWindow * (successMult * 0.98))
+              
+              -- Adjust feature weights based on context
+              if now < AI.State.punishWindowEndTime then
+                  activeWeights.opportunityWindow = math.min(2.5, activeWeights.opportunityWindow * 1.1)
+              end
+          end
+          
+          -- Track zone adaptation (damage at this distance)
+          local currentDist = nextState.distance or 0
+          AI.Learning.UpdateZoneAdaptation(currentDist, damageDealt, false)
       else
-          -- Decay feature weights if no damage (adaptive forgetting)
-          AI.FeatureWeights.tacticSuccess = math.max(0.4, AI.FeatureWeights.tacticSuccess * 0.995)
-          AI.FeatureWeights.comboDensity = math.max(0.5, AI.FeatureWeights.comboDensity * 0.997)
+          -- Get active weights
+          local activeWeights = AI.FeatureWeights
+          if AI.OpponentModel.activeWeights then
+              activeWeights = AI.OpponentModel.activeWeights
+          end
+          
+          -- Only decay if not in hot state
+          if not AI.MomentumAdaptation.isInHotState then
+              -- Get adaptive decay multiplier
+              local decayMult = AI.MetaLearning.adaptiveDecayMultiplier
+              
+              -- Decay feature weights if no damage (adaptive forgetting)
+              activeWeights.tacticSuccess = math.max(0.4, activeWeights.tacticSuccess * decayMult)
+              activeWeights.comboDensity = math.max(0.5, activeWeights.comboDensity * (decayMult + 0.002))
+          end
           
           -- Reset combo if too much time has passed without damage (improved timing)
           if AI.State.comboCount > 0 and now - AI.State.lastComboTime > CONST.COMBO_WINDOW_DURATION then
@@ -5177,6 +5718,13 @@ local function initializeCombatSystem(character)
               AI.State.comboCount = 0
               AI.State.consecutiveHits = 0
               AI.State.comboStateEndTime = 0
+              
+              -- Exit hot state if combo ended
+              if AI.MomentumAdaptation.isInHotState then
+                  AI.MomentumAdaptation.isInHotState = false
+                  AI.MomentumAdaptation.frozenFeatureWeights = nil
+                  print(`❄️ HOT STATE ENDED (Combo timeout)`)
+              end
           end
       end
       
@@ -5445,12 +5993,21 @@ local function initializeCombatSystem(character)
   table.insert(connections, humanoid.Died:Connect(function()
       AI.Score -= 10
       print(`Project Apex defeated. New Score: {AI.Score}.`)
+      -- Update DDA on death
+      AI.Learning.UpdateDDA(false) -- We lost
+      -- Track zone where we died
+      if AI.State.targetTorso and rootPart then
+          local deathDistance = (rootPart.Position - AI.State.targetTorso.Position).Magnitude
+          AI.Learning.UpdateZoneAdaptation(deathDistance, 0, true)
+      end
       -- Train Win Probability Estimator on match defeat
       if AI.WinProbabilityEstimator.enabled then
           AI.DeepLearning.TrainOnMatchEnd(false) -- We lost
       end
       -- Update self-play statistics if training against clone
       AI.DeepLearning.UpdateSelfPlayStats(false)
+      -- Save AI weights before cleanup
+      SaveAIWeights()
       Cleanup()
   end))
   table.insert(connections, character.AncestryChanged:Connect(function(_, parent)
