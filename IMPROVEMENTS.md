@@ -3,7 +3,75 @@
 ## Overview
 This document summarizes the comprehensive improvements made to the TSB Auto-Play AI combat bot script to make it better.
 
-## Bug Fixes (Latest)
+## Latest Features
+
+### **Local File Persistence System** 💾 (Major Feature)
+Implemented local file-based persistence using exploit file system functions for true cross-session learning.
+
+**Problem:**
+- Previous DataStore implementation couldn't work from client-side LocalScript
+- AI learning was lost after each script execution
+- No way to persist learning data across sessions without server access
+
+**Solution:**
+- Implemented `LocalPersistence` module using exploit file system functions
+- Uses `writefile`, `readfile`, `isfile` to save/load data to local JSON file
+- Per-user data files: `TSB_AutoPlay_Data_{UserId}.json`
+- Automatic save triggers: every 100 trials, on kill, on death
+- Automatic load on script initialization
+- Comprehensive error handling with pcall for compatibility
+
+**Data Saved:**
+- ✅ ActionStats (Q-values/weights for all tactics)
+- ✅ QNetworkB (Double Q-learning network)
+- ✅ FeatureWeights (Adaptive feature importance)
+- ✅ OpponentBehaviorModel (Counter-intelligence data)
+- ✅ CharacterModels (Character-specific weights)
+- ✅ ZoneAdaptation (Optimal distances and damage stats)
+- ✅ MetaLearning (Adaptive learning rates)
+- ✅ SelfPlayStats (Self-play performance)
+- ✅ Session data (trials, score, character)
+
+**Impact:**
+- ✅ **True persistence** - AI remembers everything across script executions
+- ✅ **Character-specific learning** - Each character's training is preserved
+- ✅ **Opponent-specific patterns** - Counter-intelligence data persists
+- ✅ **No data loss** - All learning progress is saved automatically
+- ✅ **Exploit-compatible** - Works with standard exploit file system APIs
+- ✅ **Safe fallback** - Gracefully handles unsupported environments
+
+**Files Changed:**
+- Main script: +177 lines (added LocalPersistence module)
+- Added HttpService for JSON encoding/decoding
+- Integrated save triggers throughout combat system
+- Added load trigger in initialization
+- Created PERSISTENCE_TEST.md for testing guide
+
+**Usage:**
+```lua
+-- Automatically handled, no user action needed!
+-- Save triggers:
+- Every 100 trials
+- On enemy elimination
+- On player death
+- On character model updates
+
+-- Load trigger:
+- On script initialization (after InitializeDeepNetworks)
+```
+
+**Console Output:**
+```
+✅ AI data loaded from local file
+📊 Restored 847 training trials
+🎯 Character: Saitama
+⚡ Score: 25
+💾 AI data saved to local file: TSB_AutoPlay_Data_123456789.json
+```
+
+---
+
+## Bug Fixes (Previous)
 
 ### **Fixed DataStore Client Access Error** 🔧 (Critical Fix)
 Fixed runtime error: "DataStore can't be accessed from client" at line 1608
@@ -18,16 +86,17 @@ Fixed runtime error: "DataStore can't be accessed from client" at line 1608
 - Removed `AIDataStore`, `SaveAIWeights()`, and `LoadAIWeights()` functions
 - Removed all calls to DataStore functions (4 locations)
 - Added explanatory comments about client-side limitation
+- **Now superseded by LocalPersistence implementation**
 
 **Impact:**
 - ✅ Script now runs without errors
-- ✅ AI learning still persists within the current session
-- ℹ️ Cross-session persistence requires server-side implementation
-- Note: For true persistence, implement server-side DataStore handling with RemoteEvents
+- ✅ AI learning persists across sessions with local file storage
+- ✅ True persistence achieved without server-side code
 
 **Files Changed:**
 - Main script: -116 lines (removed DataStore code)
-- Updated initialization message to reflect session-based learning
+- Main script: +177 lines (added LocalPersistence)
+- Updated initialization message to reflect local file persistence
 
 ---
 
