@@ -105,9 +105,173 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 local LogService = game:GetService("LogService")
+local HttpService = game:GetService("HttpService")
 
 --// ================= LOCAL PLAYER ================= //
 local player = Players.LocalPlayer
+
+--// ================= LOCAL FILE PERSISTENCE ================= //
+-- This module provides local file-based persistence using exploit file system functions
+-- Replaces DataStore functionality for client-side exploit scripts
+local LocalPersistence = {
+    filename = "TSB_AutoPlay_Data_" .. player.UserId .. ".json",
+    lastSaveTime = 0,
+    saveCooldown = 10, -- Minimum 10 seconds between saves to avoid spam
+    
+    -- Check if exploit supports file system functions
+    isSupported = function()
+        return (writefile and readfile and isfile and typeof(writefile) == "function" 
+                and typeof(readfile) == "function" and typeof(isfile) == "function")
+    end,
+    
+    -- Save AI learning data to local file
+    SaveData = function(self, aiTable)
+        local now = os.clock()
+        if now - self.lastSaveTime < self.saveCooldown then
+            return false, "Save on cooldown"
+        end
+        
+        if not self.isSupported() then
+            return false, "File system not supported"
+        end
+        
+        local success, result = pcall(function()
+            -- Serialize data to save
+            local dataToSave = {
+                version = "1.0",
+                timestamp = os.time(),
+                totalTrials = aiTable.ActionStats.totalTrials,
+                score = aiTable.Score,
+                identifiedCharacter = aiTable.IdentifiedCharacter,
+                
+                -- Core learning data
+                ActionStats = aiTable.ActionStats,
+                QNetworkB = aiTable.QNetworkB,
+                FeatureWeights = aiTable.FeatureWeights,
+                
+                -- Opponent modeling
+                OpponentBehaviorModel = {
+                    transitionTable = aiTable.OpponentBehaviorModel.transitionTable,
+                    perOpponentData = aiTable.OpponentBehaviorModel.perOpponentData,
+                },
+                
+                -- Character-specific models
+                CharacterModels = {
+                    characterWeights = aiTable.CharacterModels.characterWeights,
+                    currentCharacter = aiTable.CharacterModels.currentCharacter,
+                },
+                
+                -- Zone adaptation
+                ZoneAdaptation = {
+                    damageByDistance = aiTable.ZoneAdaptation.damageByDistance,
+                    deathByDistance = aiTable.ZoneAdaptation.deathByDistance,
+                    optimalZone = aiTable.ZoneAdaptation.optimalZone,
+                },
+                
+                -- Meta-learning
+                MetaLearning = {
+                    adaptiveLearningRate = aiTable.MetaLearning.adaptiveLearningRate,
+                    performanceTrend = aiTable.MetaLearning.performanceTrend,
+                },
+                
+                -- Self-play statistics
+                SelfPlayStats = aiTable.SelfPlaySystem.stats,
+            }
+            
+            -- Encode to JSON
+            local jsonData = HttpService:JSONEncode(dataToSave)
+            
+            -- Write to file
+            writefile(self.filename, jsonData)
+            
+            self.lastSaveTime = now
+            return true
+        end)
+        
+        if success and result then
+            print("💾 AI data saved to local file:", self.filename)
+            return true, "Success"
+        else
+            warn("Failed to save AI data:", result)
+            return false, result
+        end
+    end,
+    
+    -- Load AI learning data from local file
+    LoadData = function(self, aiTable)
+        if not self.isSupported() then
+            print("⚠️ File system not supported - AI will start fresh")
+            return false, "File system not supported"
+        end
+        
+        local success, result = pcall(function()
+            -- Check if file exists
+            if not isfile(self.filename) then
+                print("No previous data found - AI will start fresh")
+                return false
+            end
+            
+            -- Read file
+            local jsonData = readfile(self.filename)
+            
+            -- Decode JSON
+            local data = HttpService:JSONDecode(jsonData)
+            
+            -- Restore data
+            if data.ActionStats then
+                aiTable.ActionStats = data.ActionStats
+            end
+            if data.QNetworkB then
+                aiTable.QNetworkB = data.QNetworkB
+            end
+            if data.FeatureWeights then
+                aiTable.FeatureWeights = data.FeatureWeights
+            end
+            if data.OpponentBehaviorModel then
+                aiTable.OpponentBehaviorModel.transitionTable = data.OpponentBehaviorModel.transitionTable or {}
+                aiTable.OpponentBehaviorModel.perOpponentData = data.OpponentBehaviorModel.perOpponentData or {}
+            end
+            if data.CharacterModels then
+                aiTable.CharacterModels.characterWeights = data.CharacterModels.characterWeights or {}
+                aiTable.CharacterModels.currentCharacter = data.CharacterModels.currentCharacter or "Unknown"
+            end
+            if data.ZoneAdaptation then
+                aiTable.ZoneAdaptation.damageByDistance = data.ZoneAdaptation.damageByDistance or {}
+                aiTable.ZoneAdaptation.deathByDistance = data.ZoneAdaptation.deathByDistance or {}
+                aiTable.ZoneAdaptation.optimalZone = data.ZoneAdaptation.optimalZone or 30
+            end
+            if data.MetaLearning then
+                aiTable.MetaLearning.adaptiveLearningRate = data.MetaLearning.adaptiveLearningRate or 0.45
+                aiTable.MetaLearning.performanceTrend = data.MetaLearning.performanceTrend or 0
+            end
+            if data.SelfPlayStats then
+                aiTable.SelfPlaySystem.stats = data.SelfPlayStats
+            end
+            if data.score then
+                aiTable.Score = data.score
+            end
+            if data.identifiedCharacter then
+                aiTable.IdentifiedCharacter = data.identifiedCharacter
+            end
+            
+            print("✅ AI data loaded from local file")
+            print("📊 Restored " .. (data.totalTrials or 0) .. " training trials")
+            print("🎯 Character: " .. (data.identifiedCharacter or "Unknown"))
+            print("⚡ Score: " .. (data.score or 0))
+            
+            return true
+        end)
+        
+        if success and result then
+            return true, "Success"
+        elseif success then
+            return false, "No data file"
+        else
+            warn("Failed to load AI data:", result)
+            return false, result
+        end
+    end,
+}
 
 --// ================= TRAINING MODE STATE ================= //
 local TrainingMode = {
@@ -1601,11 +1765,12 @@ local function CopyNetwork(source, target)
     end
 end
 
---// ================= DATASTORE PERSISTENCE ================= //
+--// ================= LOCAL FILE PERSISTENCE (EXPLOIT) ================= //
 
--- Note: DataStore persistence has been removed as it cannot be accessed from client-side scripts.
--- AI learning data persists within the current session only.
--- For cross-session persistence, implement server-side DataStore handling.
+-- Note: Traditional DataStore persistence has been replaced with local file-based persistence
+-- using exploit file system functions (writefile, readfile, isfile).
+-- AI learning data is saved to a JSON file in the workspace folder and persists across script executions.
+-- This provides true persistence without requiring server-side access.
 
 --// ================= CORE INITIALIZATION ================= //
 
@@ -1815,6 +1980,9 @@ local function initializeCombatSystem(character)
           -- Weights are already in sync (we're pointing to the same table)
           -- Just log for confirmation
           print(`Character model saved for: {models.currentCharacter} (Trials: {AI.ActionStats.totalTrials})`)
+          
+          -- Trigger local file save
+          LocalPersistence:SaveData(AI)
       end
   end
 
@@ -1984,15 +2152,15 @@ local function initializeCombatSystem(character)
   -- Initialize Deep Neural Networks
   InitializeDeepNetworks()
   
-  -- Note: DataStore persistence removed (client-side limitation)
-  -- AI learning persists within session only
+  -- Load AI learning data from local file (exploit-based persistence)
+  LocalPersistence:LoadData(AI)
   
   -- Initialize self-play system if enabled
   if AI.SelfPlaySystem.enabled then
       AI.DeepLearning.InitializeSelfPlay()
   end
 
-  print(`Initializing Project Deep Apex Elite (V37.3+Adaptive) for {player.Name}... Character: {AI.IdentifiedCharacter}. Enhanced with: Session-Based Learning, Adaptive Learning Rates, Opponent-Specific Weights, Momentum Adaptation, DDA, Bait Learning, Resource Awareness & Zone Adaptation.`)
+  print(`Initializing Project Deep Apex Elite (V37.3+Adaptive) for {player.Name}... Character: {AI.IdentifiedCharacter}. Enhanced with: Local File Persistence, Session-Based Learning, Adaptive Learning Rates, Opponent-Specific Weights, Momentum Adaptation, DDA, Bait Learning, Resource Awareness & Zone Adaptation.`)
 
   --// ================= CORE AI LOGIC ================= //
 
@@ -5892,6 +6060,8 @@ local function initializeCombatSystem(character)
       end
       -- Update self-play statistics if training against clone
       AI.DeepLearning.UpdateSelfPlayStats(false)
+      -- Save AI data on death
+      LocalPersistence:SaveData(AI)
       Cleanup()
   end))
   table.insert(connections, character.AncestryChanged:Connect(function(_, parent)
