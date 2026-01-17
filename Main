@@ -114,14 +114,19 @@ local player = Players.LocalPlayer
 -- This module provides local file-based persistence using exploit file system functions
 -- Replaces DataStore functionality for client-side exploit scripts
 local LocalPersistence = {
-    filename = "TSB_AutoPlay_Data_" .. player.UserId .. ".json",
+    filename = "TSB_AutoPlay_Data_" .. tostring(math.floor(tonumber(player.UserId) or 0)) .. ".json",
     lastSaveTime = 0,
     saveCooldown = 10, -- Minimum 10 seconds between saves to avoid spam
+    fileSystemSupported = nil, -- Cached value
     
-    -- Check if exploit supports file system functions
-    isSupported = function()
-        return (writefile and readfile and isfile and typeof(writefile) == "function" 
+    -- Check if exploit supports file system functions (cached)
+    isSupported = function(self)
+        if self.fileSystemSupported ~= nil then
+            return self.fileSystemSupported
+        end
+        self.fileSystemSupported = (writefile and readfile and isfile and typeof(writefile) == "function" 
                 and typeof(readfile) == "function" and typeof(isfile) == "function")
+        return self.fileSystemSupported
     end,
     
     -- Save AI learning data to local file
@@ -131,7 +136,7 @@ local LocalPersistence = {
             return false, "Save on cooldown"
         end
         
-        if not self.isSupported() then
+        if not self:isSupported() then
             return false, "File system not supported"
         end
         
@@ -178,8 +183,14 @@ local LocalPersistence = {
                 SelfPlayStats = aiTable.SelfPlaySystem.stats,
             }
             
-            -- Encode to JSON
-            local jsonData = HttpService:JSONEncode(dataToSave)
+            -- Encode to JSON with error handling
+            local encodeSuccess, jsonData = pcall(function()
+                return HttpService:JSONEncode(dataToSave)
+            end)
+            
+            if not encodeSuccess then
+                error("Failed to encode data to JSON: " .. tostring(jsonData))
+            end
             
             -- Write to file
             writefile(self.filename, jsonData)
@@ -192,14 +203,14 @@ local LocalPersistence = {
             print("💾 AI data saved to local file:", self.filename)
             return true, "Success"
         else
-            warn("Failed to save AI data:", result)
+            warn("❌ Failed to save AI data:", tostring(result))
             return false, result
         end
     end,
     
     -- Load AI learning data from local file
     LoadData = function(self, aiTable)
-        if not self.isSupported() then
+        if not self:isSupported() then
             print("⚠️ File system not supported - AI will start fresh")
             return false, "File system not supported"
         end
@@ -207,17 +218,30 @@ local LocalPersistence = {
         local success, result = pcall(function()
             -- Check if file exists
             if not isfile(self.filename) then
-                print("No previous data found - AI will start fresh")
+                print("ℹ️ No previous data found - AI will start fresh")
                 return false
             end
             
             -- Read file
             local jsonData = readfile(self.filename)
             
-            -- Decode JSON
-            local data = HttpService:JSONDecode(jsonData)
+            if not jsonData or jsonData == "" then
+                warn("⚠️ Data file is empty - AI will start fresh")
+                return false
+            end
             
-            -- Restore data
+            -- Decode JSON with error handling
+            local decodeSuccess, data = pcall(function()
+                return HttpService:JSONDecode(jsonData)
+            end)
+            
+            if not decodeSuccess then
+                warn("❌ Failed to decode JSON (file may be corrupted):", tostring(data))
+                warn("⚠️ AI will start fresh. You can delete the file to clear the error.")
+                return false
+            end
+            
+            -- Restore data with validation
             if data.ActionStats then
                 aiTable.ActionStats = data.ActionStats
             end
@@ -1981,8 +2005,11 @@ local function initializeCombatSystem(character)
           -- Just log for confirmation
           print(`Character model saved for: {models.currentCharacter} (Trials: {AI.ActionStats.totalTrials})`)
           
-          -- Trigger local file save
-          LocalPersistence:SaveData(AI)
+          -- Trigger local file save with error handling
+          local success, err = LocalPersistence:SaveData(AI)
+          if not success and err ~= "Save on cooldown" and err ~= "File system not supported" then
+              warn("⚠️ Character model file save failed:", err)
+          end
       end
   end
 
@@ -6060,8 +6087,11 @@ local function initializeCombatSystem(character)
       end
       -- Update self-play statistics if training against clone
       AI.DeepLearning.UpdateSelfPlayStats(false)
-      -- Save AI data on death
-      LocalPersistence:SaveData(AI)
+      -- Save AI data on death with error handling
+      local saveSuccess, saveErr = LocalPersistence:SaveData(AI)
+      if not saveSuccess and saveErr ~= "Save on cooldown" and saveErr ~= "File system not supported" then
+          warn("⚠️ Failed to save AI data on death:", saveErr)
+      end
       Cleanup()
   end))
   table.insert(connections, character.AncestryChanged:Connect(function(_, parent)
