@@ -114,7 +114,7 @@ local player = Players.LocalPlayer
 -- This module provides local file-based persistence using exploit file system functions
 -- Replaces DataStore functionality for client-side exploit scripts
 local LocalPersistence = {
-    filename = "TSB_AutoPlay_Data_" .. tostring(math.floor(tonumber(player.UserId) or 0)) .. ".json",
+    filename = "TSB_AutoPlay_Data_" .. tostring(math.floor(tonumber(player.UserId) or Players.LocalPlayer.UserId or 0)) .. ".json",
     lastSaveTime = 0,
     saveCooldown = 10, -- Minimum 10 seconds between saves to avoid spam
     fileSystemSupported = nil, -- Cached value
@@ -124,14 +124,17 @@ local LocalPersistence = {
         if self.fileSystemSupported ~= nil then
             return self.fileSystemSupported
         end
-        self.fileSystemSupported = (writefile and readfile and isfile and typeof(writefile) == "function" 
-                and typeof(readfile) == "function" and typeof(isfile) == "function")
+        -- Check if all required file system functions exist and are callable
+        local hasWriteFile = writefile and typeof(writefile) == "function"
+        local hasReadFile = readfile and typeof(readfile) == "function"
+        local hasIsFile = isfile and typeof(isfile) == "function"
+        self.fileSystemSupported = hasWriteFile and hasReadFile and hasIsFile
         return self.fileSystemSupported
     end,
     
     -- Save AI learning data to local file
     SaveData = function(self, aiTable)
-        local now = os.clock()
+        local now = os.time() -- Use os.time() for real elapsed time
         if now - self.lastSaveTime < self.saveCooldown then
             return false, "Save on cooldown"
         end
