@@ -1558,9 +1558,19 @@ end
 local function FindMax(arr)
     if #arr == 0 then return 0 end
     local maxVal = arr[1]
+    -- Handle nil first element by defaulting to 0 to maintain arithmetic safety
+    if maxVal == nil then
+        maxVal = 0
+        if CONST and CONST.DEBUG_MODE then
+            warn(string.format("FindMax: First array element is nil, defaulting to 0"))
+        end
+    end
     for i = 2, #arr do
-        if arr[i] > maxVal then
+        -- Only compare non-nil values; skip nil elements
+        if arr[i] and arr[i] > maxVal then
             maxVal = arr[i]
+        elseif not arr[i] and CONST and CONST.DEBUG_MODE then
+            warn(string.format("FindMax: Array contains nil at index %d", i))
         end
     end
     return maxVal
@@ -1672,6 +1682,15 @@ local function ForwardLayer(layer, inputs, activation, useLayerNorm, useNoise, s
         local sum = layer.biases[i]
         for j = 1, #inputs do
             local weight = layer.weights[i][j]
+            local input = inputs[j]
+            
+            -- Replace nil inputs with 0 to prevent arithmetic errors
+            if input == nil then
+                input = 0
+                if CONST and CONST.DEBUG_MODE then
+                    warn(string.format("ForwardLayer: Nil input at index %d for neuron %d, defaulting to 0", j, i))
+                end
+            end
             
             -- Add parametric noise (Noisy Networks) if enabled
             if useNoise and AI.DeepNetwork.noisyNets.enabled then
@@ -1679,7 +1698,7 @@ local function ForwardLayer(layer, inputs, activation, useLayerNorm, useNoise, s
                 weight = weight + noise * math.abs(weight)
             end
             
-            sum += weight * inputs[j]
+            sum += weight * input
         end
         outputs[i] = sum
     end
@@ -3329,6 +3348,14 @@ local function initializeCombatSystem(character)
               
               -- Average ensemble and target network (more stable)
               nextMaxQValue = (nextMaxQValue + targetMaxQ) / 2
+          end
+      end
+      
+      -- Ensure nextMaxQValue is never nil (safety guard)
+      if nextMaxQValue == nil then
+          nextMaxQValue = 0
+          if CONST and CONST.DEBUG_MODE then
+              warn("Reinforce: nextMaxQValue is nil - defaulting to 0. This may indicate neural network prediction issues.")
           end
       end
 
