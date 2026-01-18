@@ -1558,8 +1558,13 @@ end
 local function FindMax(arr)
     if #arr == 0 then return 0 end
     local maxVal = arr[1]
+    -- Handle nil first element
+    if maxVal == nil then
+        maxVal = 0
+    end
     for i = 2, #arr do
-        if arr[i] > maxVal then
+        -- Skip nil values
+        if arr[i] ~= nil and arr[i] > maxVal then
             maxVal = arr[i]
         end
     end
@@ -1672,6 +1677,12 @@ local function ForwardLayer(layer, inputs, activation, useLayerNorm, useNoise, s
         local sum = layer.biases[i]
         for j = 1, #inputs do
             local weight = layer.weights[i][j]
+            local input = inputs[j]
+            
+            -- Skip nil inputs to prevent arithmetic errors
+            if input == nil then
+                input = 0
+            end
             
             -- Add parametric noise (Noisy Networks) if enabled
             if useNoise and AI.DeepNetwork.noisyNets.enabled then
@@ -1679,7 +1690,7 @@ local function ForwardLayer(layer, inputs, activation, useLayerNorm, useNoise, s
                 weight = weight + noise * math.abs(weight)
             end
             
-            sum += weight * inputs[j]
+            sum += weight * input
         end
         outputs[i] = sum
     end
@@ -3330,6 +3341,11 @@ local function initializeCombatSystem(character)
               -- Average ensemble and target network (more stable)
               nextMaxQValue = (nextMaxQValue + targetMaxQ) / 2
           end
+      end
+      
+      -- Ensure nextMaxQValue is never nil (safety guard)
+      if nextMaxQValue == nil then
+          nextMaxQValue = 0
       end
 
       -- Randomly choose which Q-network to update (Double Q-Learning for tabular part)
