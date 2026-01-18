@@ -244,12 +244,47 @@ local LocalPersistence = {
                 return false
             end
             
+            -- Helper function to validate and fix action stats structure
+            local function validateActionStats(stats, statType)
+                if not stats then return false end
+                local tactics = {"Aggressive", "Defensive", "BaitAndPunish", "Finisher", "ExploitSeeker"}
+                local actions = {"ATTACK", "SPECIAL", "EVADE", "FEINT", "REPOSITION", "DASH", "BLOCK"}
+                
+                for _, tactic in ipairs(tactics) do
+                    if not stats[tactic] then
+                        warn(string.format("⚠️ Missing tactic %s in %s - creating default", tactic, statType))
+                        stats[tactic] = {total = 0}
+                    end
+                    
+                    for _, action in ipairs(actions) do
+                        if not stats[tactic][action] then
+                            stats[tactic][action] = {count = 0, value = 0, eligibility = 0}
+                        else
+                            -- Ensure all required fields exist
+                            if stats[tactic][action].count == nil then
+                                stats[tactic][action].count = 0
+                            end
+                            if stats[tactic][action].value == nil then
+                                stats[tactic][action].value = 0
+                                warn(string.format("⚠️ Fixed nil value for %s.%s.%s", statType, tactic, action))
+                            end
+                            if stats[tactic][action].eligibility == nil then
+                                stats[tactic][action].eligibility = 0
+                            end
+                        end
+                    end
+                end
+                return true
+            end
+            
             -- Restore data with validation
             if data.ActionStats then
                 aiTable.ActionStats = data.ActionStats
+                validateActionStats(aiTable.ActionStats, "ActionStats")
             end
             if data.QNetworkB then
                 aiTable.QNetworkB = data.QNetworkB
+                validateActionStats(aiTable.QNetworkB, "QNetworkB")
             end
             if data.FeatureWeights then
                 aiTable.FeatureWeights = data.FeatureWeights
@@ -1557,20 +1592,32 @@ end
 -- Helper function to find max value in array (safer than table.unpack for large arrays)
 local function FindMax(arr)
     if #arr == 0 then return 0 end
-    local maxVal = arr[1]
-    -- Handle nil first element by defaulting to 0 to maintain arithmetic safety
-    if maxVal == nil then
-        maxVal = 0
-        if CONST and CONST.DEBUG_MODE then
-            warn(string.format("FindMax: First array element is nil, defaulting to 0"))
+    local maxVal = nil
+    
+    -- Find first non-nil value
+    for i = 1, #arr do
+        if arr[i] ~= nil and arr[i] == arr[i] then -- Check not nil and not NaN
+            maxVal = arr[i]
+            break
         end
     end
-    for i = 2, #arr do
-        -- Only compare non-nil values; skip nil elements
-        if arr[i] and arr[i] > maxVal then
-            maxVal = arr[i]
-        elseif not arr[i] and CONST and CONST.DEBUG_MODE then
-            warn(string.format("FindMax: Array contains nil at index %d", i))
+    
+    -- If all values are nil or NaN, default to 0
+    if maxVal == nil then
+        if CONST and CONST.DEBUG_MODE then
+            warn("FindMax: All array elements are nil or NaN, defaulting to 0")
+        end
+        return 0
+    end
+    
+    -- Find maximum value among non-nil, non-NaN elements
+    for i = 1, #arr do
+        if arr[i] ~= nil and arr[i] == arr[i] then -- Check not nil and not NaN
+            if arr[i] > maxVal then
+                maxVal = arr[i]
+            end
+        elseif CONST and CONST.DEBUG_MODE and arr[i] ~= nil then
+            warn(string.format("FindMax: Array contains NaN at index %d", i))
         end
     end
     return maxVal
@@ -3367,14 +3414,37 @@ local function initializeCombatSystem(character)
       local netReward = rawReward - (actionCost * CONST.COST_PENALTY_FACTOR)
 
       -- Calculate TD error using neural network Q-value
-      local old_value = statsToUpdate.value
+      -- Safety check: Ensure old_value is never nil to prevent arithmetic errors
+      local old_value = statsToUpdate.value or 0
+      if statsToUpdate.value == nil then
+          statsToUpdate.value = 0
+          if CONST and CONST.DEBUG_MODE then
+              warn(string.format("Reinforce: statsToUpdate.value is nil for action %s in tactic %s, initializing to 0", action, tactic))
+          end
+      end
       local td_error = netReward + CONST.DISCOUNT_FACTOR_GAMMA * nextMaxQValue - old_value
       
       -- Update eligibility trace
+      -- Safety check: Ensure eligibility is never nil
+      if statsToUpdate.eligibility == nil then
+          statsToUpdate.eligibility = 0
+          if CONST and CONST.DEBUG_MODE then
+              warn(string.format("Reinforce: statsToUpdate.eligibility is nil for action %s in tactic %s, initializing to 0", action, tactic))
+          end
+      end
       statsToUpdate.eligibility = statsToUpdate.eligibility * CONST.DISCOUNT_FACTOR_GAMMA * CONST.ELIGIBILITY_LAMBDA + 1
       
       -- Q-Learning update with adaptive learning rate and eligibility traces
       statsToUpdate.value = old_value + learningRate * td_error * statsToUpdate.eligibility
+      
+      -- Ensure count field is initialized
+      if statsToUpdate.count == nil then
+          statsToUpdate.count = 0
+          if CONST and CONST.DEBUG_MODE then
+              warn(string.format("Reinforce: statsToUpdate.count is nil for action %s in tactic %s, initializing to 0", action, tactic))
+          end
+      end
+      statsToUpdate.count += 1
       
       -- Update deep neural networks with proper backpropagation
       if nextState and math.abs(td_error) > 0.01 then
