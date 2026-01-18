@@ -1562,14 +1562,14 @@ local function FindMax(arr)
     if maxVal == nil then
         maxVal = 0
         if CONST and CONST.DEBUG_MODE then
-            warn("FindMax: First array element is nil, defaulting to 0")
+            warn(string.format("FindMax: First array element is nil, defaulting to 0"))
         end
     end
     for i = 2, #arr do
         -- Only compare non-nil values; skip nil elements
         if arr[i] and arr[i] > maxVal then
             maxVal = arr[i]
-        elseif arr[i] == nil and CONST and CONST.DEBUG_MODE then
+        elseif not arr[i] and CONST and CONST.DEBUG_MODE then
             warn(string.format("FindMax: Array contains nil at index %d", i))
         end
     end
@@ -1688,7 +1688,7 @@ local function ForwardLayer(layer, inputs, activation, useLayerNorm, useNoise, s
             if input == nil then
                 input = 0
                 if CONST and CONST.DEBUG_MODE then
-                    warn(string.format("ForwardLayer: Nil input at index %d for neuron %d - defaulting to 0", j, i))
+                    warn(string.format("ForwardLayer: Nil input at index %d for neuron %d, defaulting to 0", j, i))
                 end
             end
             
