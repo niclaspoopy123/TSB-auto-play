@@ -3285,48 +3285,70 @@ local function initializeCombatSystem(character)
       if #AI.MetaLearning.recentRewards >= 12 then
           local recentSum = 0
           local recentVar = 0
+          local validRecentCount = 0
+          
+          -- Sum recent rewards, skipping nil and NaN
           for i = #AI.MetaLearning.recentRewards - 11, #AI.MetaLearning.recentRewards do
-              recentSum += AI.MetaLearning.recentRewards[i]
+              local reward = AI.MetaLearning.recentRewards[i]
+              if reward and reward == reward then -- Check not nil and not NaN
+                  recentSum += reward
+                  validRecentCount += 1
+              end
           end
-          local recentMean = recentSum / 12
           
-          -- Calculate variance for stability analysis
-          for i = #AI.MetaLearning.recentRewards - 11, #AI.MetaLearning.recentRewards do
-              local diff = AI.MetaLearning.recentRewards[i] - recentMean
-              recentVar += diff * diff
-          end
-          recentVar = recentVar / 12
-          
-          local oldSum = 0
-          for i = 1, math.min(12, #AI.MetaLearning.recentRewards - 12) do
-              oldSum += AI.MetaLearning.recentRewards[i]
-          end
-          local oldMean = oldSum / math.min(12, #AI.MetaLearning.recentRewards - 12)
-          AI.MetaLearning.performanceTrend = recentSum - oldSum
-          
-          -- Track stability and improvement trends
-          if recentMean > oldMean then
-              AI.MetaLearning.consecutiveImprovements += 1
+          if validRecentCount < 6 then
+              -- Not enough valid data for meta-learning
+              if CONST and CONST.DEBUG_MODE then
+                  warn("Meta-learning: Not enough valid reward data")
+              end
           else
-              AI.MetaLearning.consecutiveImprovements = 0
-          end
+              local recentMean = recentSum / validRecentCount
+              
+              -- Calculate variance for stability analysis
+              for i = #AI.MetaLearning.recentRewards - 11, #AI.MetaLearning.recentRewards do
+                  local reward = AI.MetaLearning.recentRewards[i]
+                  if reward and reward == reward then -- Check not nil and not NaN
+                      local diff = reward - recentMean
+                      recentVar += diff * diff
+                  end
+              end
+              recentVar = recentVar / validRecentCount
           
-          local stabilityScore = math.max(0, 1 - (recentVar / 30))
-          AI.MetaLearning.learningRateStability = stabilityScore
-          
-          -- Adjust DNN learning rate based on variance and improvement with better thresholds
-          if recentVar < 3.5 and recentMean > 0 then
-              -- Very stable positive performance: increase learning rate more aggressively
-              AI.DeepNetwork.learningRateDNN = math.min(0.0028, AI.DeepNetwork.learningRateDNN * 1.06)
-          elseif recentVar < 7 and AI.MetaLearning.consecutiveImprovements >= 3 then
-              -- Stable and improving: moderate increase
-              AI.DeepNetwork.learningRateDNN = math.min(0.0022, AI.DeepNetwork.learningRateDNN * 1.03)
-          elseif recentVar > 22 then
-              -- High variance: decrease for stability
-              AI.DeepNetwork.learningRateDNN = math.max(0.0005, AI.DeepNetwork.learningRateDNN * 0.92)
-          elseif recentVar > 13 and recentMean < 0 then
-              -- Moderate variance with negative trend: stronger decrease
-              AI.DeepNetwork.learningRateDNN = math.max(0.0006, AI.DeepNetwork.learningRateDNN * 0.94)
+              local oldSum = 0
+              local oldCount = math.min(12, #AI.MetaLearning.recentRewards - 12)
+              for i = 1, oldCount do
+                  local reward = AI.MetaLearning.recentRewards[i]
+                  if reward and reward == reward then -- Check not nil and not NaN
+                      oldSum += reward
+                  end
+              end
+              local oldMean = oldCount > 0 and (oldSum / oldCount) or 0
+              AI.MetaLearning.performanceTrend = recentSum - oldSum
+              
+              -- Track stability and improvement trends
+              if recentMean > oldMean then
+                  AI.MetaLearning.consecutiveImprovements += 1
+              else
+                  AI.MetaLearning.consecutiveImprovements = 0
+              end
+              
+              local stabilityScore = math.max(0, 1 - (recentVar / 30))
+              AI.MetaLearning.learningRateStability = stabilityScore
+              
+              -- Adjust DNN learning rate based on variance and improvement with better thresholds
+              if recentVar < 3.5 and recentMean > 0 then
+                  -- Very stable positive performance: increase learning rate more aggressively
+                  AI.DeepNetwork.learningRateDNN = math.min(0.0028, AI.DeepNetwork.learningRateDNN * 1.06)
+              elseif recentVar < 7 and AI.MetaLearning.consecutiveImprovements >= 3 then
+                  -- Stable and improving: moderate increase
+                  AI.DeepNetwork.learningRateDNN = math.min(0.0022, AI.DeepNetwork.learningRateDNN * 1.03)
+              elseif recentVar > 22 then
+                  -- High variance: decrease for stability
+                  AI.DeepNetwork.learningRateDNN = math.max(0.0005, AI.DeepNetwork.learningRateDNN * 0.92)
+              elseif recentVar > 13 and recentMean < 0 then
+                  -- Moderate variance with negative trend: stronger decrease
+                  AI.DeepNetwork.learningRateDNN = math.max(0.0006, AI.DeepNetwork.learningRateDNN * 0.94)
+              end
           end
       end
       
@@ -3337,36 +3359,52 @@ local function initializeCombatSystem(character)
       if #AI.State.recentPerformance >= 6 then
           local perfSum = 0
           local perfVar = 0
+          local validPerfCount = 0
+          
+          -- Sum performance values, skipping nil and NaN
           for _, perf in ipairs(AI.State.recentPerformance) do
-              perfSum += perf
-          end
-          local perfMean = perfSum / #AI.State.recentPerformance
-          
-          -- Calculate variance
-          for _, perf in ipairs(AI.State.recentPerformance) do
-              local diff = perf - perfMean
-              perfVar += diff * diff
-          end
-          perfVar = perfVar / #AI.State.recentPerformance
-          
-          -- Adapt learning rate based on performance stability, trend, and meta-learning stability
-          local stabilityBonus = AI.MetaLearning.learningRateStability * 0.1
-          
-          if perfMean > 6 and perfVar < 8 then
-              -- Excellent stable performance: strong increase with stability bonus
-              learningRate = math.min(CONST.MAX_LEARNING_RATE, learningRate * (1.06 + stabilityBonus))
-          elseif perfMean > 3 and perfVar < 12 then
-              -- Good performance: moderate increase
-              learningRate = math.min(CONST.MAX_LEARNING_RATE, learningRate * (1.04 + stabilityBonus))
-          elseif perfMean < -2 and perfVar > 25 then
-              -- Poor unstable performance: strong decrease
-              learningRate = math.max(CONST.MIN_LEARNING_RATE, learningRate * 0.92)
-          elseif perfMean < 0 or perfVar > 30 then
-              -- Negative or highly unstable: moderate decrease
-              learningRate = math.max(CONST.MIN_LEARNING_RATE, learningRate * 0.94)
+              if perf and perf == perf then -- Check not nil and not NaN
+                  perfSum += perf
+                  validPerfCount += 1
+              end
           end
           
-          AI.State.currentLearningRate = learningRate
+          -- If we don't have enough valid performance data, skip adaptation
+          if validPerfCount < 3 then
+              if CONST and CONST.DEBUG_MODE then
+                  warn("Adaptive learning: Not enough valid performance data, skipping")
+              end
+          else
+              local perfMean = perfSum / validPerfCount
+              
+              -- Calculate variance
+              for _, perf in ipairs(AI.State.recentPerformance) do
+                  if perf and perf == perf then -- Check not nil and not NaN
+                      local diff = perf - perfMean
+                      perfVar += diff * diff
+                  end
+              end
+              perfVar = perfVar / validPerfCount
+          
+              -- Adapt learning rate based on performance stability, trend, and meta-learning stability
+              local stabilityBonus = AI.MetaLearning.learningRateStability * 0.1
+              
+              if perfMean > 6 and perfVar < 8 then
+                  -- Excellent stable performance: strong increase with stability bonus
+                  learningRate = math.min(CONST.MAX_LEARNING_RATE, learningRate * (1.06 + stabilityBonus))
+              elseif perfMean > 3 and perfVar < 12 then
+                  -- Good performance: moderate increase
+                  learningRate = math.min(CONST.MAX_LEARNING_RATE, learningRate * (1.04 + stabilityBonus))
+              elseif perfMean < -2 and perfVar > 25 then
+                  -- Poor unstable performance: strong decrease
+                  learningRate = math.max(CONST.MIN_LEARNING_RATE, learningRate * 0.92)
+              elseif perfMean < 0 or perfVar > 30 then
+                  -- Negative or highly unstable: moderate decrease
+                  learningRate = math.max(CONST.MIN_LEARNING_RATE, learningRate * 0.94)
+              end
+              
+              AI.State.currentLearningRate = learningRate
+          end
       end
       
       -- Use adaptive learning rate for meta-learning as well
