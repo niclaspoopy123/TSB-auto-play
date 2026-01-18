@@ -1558,12 +1558,12 @@ end
 local function FindMax(arr)
     if #arr == 0 then return 0 end
     local maxVal = arr[1]
-    -- Handle nil first element
+    -- Handle nil first element by defaulting to 0 to maintain arithmetic safety
     if maxVal == nil then
         maxVal = 0
     end
     for i = 2, #arr do
-        -- Skip nil values
+        -- Only compare non-nil values; skip nil elements
         if arr[i] ~= nil and arr[i] > maxVal then
             maxVal = arr[i]
         end
@@ -1679,7 +1679,7 @@ local function ForwardLayer(layer, inputs, activation, useLayerNorm, useNoise, s
             local weight = layer.weights[i][j]
             local input = inputs[j]
             
-            -- Skip nil inputs to prevent arithmetic errors
+            -- Replace nil inputs with 0 to prevent arithmetic errors
             if input == nil then
                 input = 0
             end
