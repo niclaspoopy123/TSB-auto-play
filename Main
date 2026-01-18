@@ -1561,11 +1561,16 @@ local function FindMax(arr)
     -- Handle nil first element by defaulting to 0 to maintain arithmetic safety
     if maxVal == nil then
         maxVal = 0
+        if CONST and CONST.DEBUG_MODE then
+            warn("FindMax: First array element is nil, defaulting to 0")
+        end
     end
     for i = 2, #arr do
         -- Only compare non-nil values; skip nil elements
-        if arr[i] ~= nil and arr[i] > maxVal then
+        if arr[i] and arr[i] > maxVal then
             maxVal = arr[i]
+        elseif arr[i] == nil and CONST and CONST.DEBUG_MODE then
+            warn("FindMax: Array contains nil at index", i)
         end
     end
     return maxVal
@@ -1682,6 +1687,9 @@ local function ForwardLayer(layer, inputs, activation, useLayerNorm, useNoise, s
             -- Replace nil inputs with 0 to prevent arithmetic errors
             if input == nil then
                 input = 0
+                if CONST and CONST.DEBUG_MODE then
+                    warn("ForwardLayer: Nil input at index", j, "for neuron", i, "- defaulting to 0")
+                end
             end
             
             -- Add parametric noise (Noisy Networks) if enabled
@@ -3346,6 +3354,9 @@ local function initializeCombatSystem(character)
       -- Ensure nextMaxQValue is never nil (safety guard)
       if nextMaxQValue == nil then
           nextMaxQValue = 0
+          if CONST and CONST.DEBUG_MODE then
+              warn("Reinforce: nextMaxQValue is nil - defaulting to 0. This may indicate neural network prediction issues.")
+          end
       end
 
       -- Randomly choose which Q-network to update (Double Q-Learning for tabular part)
