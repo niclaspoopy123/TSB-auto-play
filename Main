@@ -3874,7 +3874,9 @@ local function initializeCombatSystem(character)
       local expectedReward = 0
       if AI.HybridModel.rewardModel[transitionKey] then
           local model = AI.HybridModel.rewardModel[transitionKey]
-          expectedReward = model.sum / model.count
+          if model.count and model.count > 0 and model.sum then
+              expectedReward = model.sum / model.count
+          end
       end
       
       -- Simple recursive planning (limited depth)
