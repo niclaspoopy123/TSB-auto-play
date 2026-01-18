@@ -254,6 +254,12 @@ local LocalPersistence = {
                     if not stats[tactic] then
                         warn(string.format("⚠️ Missing tactic %s in %s - creating default", tactic, statType))
                         stats[tactic] = {total = 0}
+                        -- Actions will be added in the loop below
+                    end
+                    
+                    -- Ensure total field exists
+                    if stats[tactic].total == nil then
+                        stats[tactic].total = 0
                     end
                     
                     for _, action in ipairs(actions) do
@@ -1594,9 +1600,10 @@ local function FindMax(arr)
     if #arr == 0 then return 0 end
     local maxVal = nil
     
-    -- Find first non-nil value
+    -- Find first non-nil, non-NaN value
+    -- Note: NaN check uses the property that NaN != NaN in IEEE 754 standard
     for i = 1, #arr do
-        if arr[i] ~= nil and arr[i] == arr[i] then -- Check not nil and not NaN
+        if arr[i] ~= nil and arr[i] == arr[i] then -- Check not nil and not NaN (NaN is the only value that doesn't equal itself)
             maxVal = arr[i]
             break
         end
@@ -3316,13 +3323,15 @@ local function initializeCombatSystem(character)
           
               local oldSum = 0
               local oldCount = math.min(12, #AI.MetaLearning.recentRewards - 12)
+              local validOldCount = 0
               for i = 1, oldCount do
                   local reward = AI.MetaLearning.recentRewards[i]
                   if reward and reward == reward then -- Check not nil and not NaN
                       oldSum += reward
+                      validOldCount += 1
                   end
               end
-              local oldMean = oldCount > 0 and (oldSum / oldCount) or 0
+              local oldMean = validOldCount > 0 and (oldSum / validOldCount) or 0
               AI.MetaLearning.performanceTrend = recentSum - oldSum
               
               -- Track stability and improvement trends
@@ -3453,13 +3462,14 @@ local function initializeCombatSystem(character)
 
       -- Calculate TD error using neural network Q-value
       -- Safety check: Ensure old_value is never nil to prevent arithmetic errors
-      local old_value = statsToUpdate.value or 0
+      -- Initialize statsToUpdate.value if nil (fixes corrupted persisted data)
       if statsToUpdate.value == nil then
           statsToUpdate.value = 0
           if CONST and CONST.DEBUG_MODE then
               warn(string.format("Reinforce: statsToUpdate.value is nil for action %s in tactic %s, initializing to 0", action, tactic))
           end
       end
+      local old_value = statsToUpdate.value
       local td_error = netReward + CONST.DISCOUNT_FACTOR_GAMMA * nextMaxQValue - old_value
       
       -- Update eligibility trace
