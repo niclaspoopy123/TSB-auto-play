@@ -244,12 +244,53 @@ local LocalPersistence = {
                 return false
             end
             
+            -- Helper function to validate and fix action stats structure
+            local function validateActionStats(stats, statType)
+                if not stats then return false end
+                local tactics = {"Aggressive", "Defensive", "BaitAndPunish", "Finisher", "ExploitSeeker"}
+                local actions = {"ATTACK", "SPECIAL", "EVADE", "FEINT", "REPOSITION", "DASH", "BLOCK"}
+                
+                for _, tactic in ipairs(tactics) do
+                    if not stats[tactic] then
+                        warn(string.format("⚠️ Missing tactic %s in %s - creating default", tactic, statType))
+                        stats[tactic] = {total = 0}
+                        -- Actions will be added in the loop below
+                    end
+                    
+                    -- Ensure total field exists
+                    if stats[tactic].total == nil then
+                        stats[tactic].total = 0
+                    end
+                    
+                    for _, action in ipairs(actions) do
+                        if not stats[tactic][action] then
+                            stats[tactic][action] = {count = 0, value = 0, eligibility = 0}
+                        else
+                            -- Ensure all required fields exist
+                            if stats[tactic][action].count == nil then
+                                stats[tactic][action].count = 0
+                            end
+                            if stats[tactic][action].value == nil then
+                                stats[tactic][action].value = 0
+                                warn(string.format("⚠️ Fixed nil value for %s.%s.%s", statType, tactic, action))
+                            end
+                            if stats[tactic][action].eligibility == nil then
+                                stats[tactic][action].eligibility = 0
+                            end
+                        end
+                    end
+                end
+                return true
+            end
+            
             -- Restore data with validation
             if data.ActionStats then
                 aiTable.ActionStats = data.ActionStats
+                validateActionStats(aiTable.ActionStats, "ActionStats")
             end
             if data.QNetworkB then
                 aiTable.QNetworkB = data.QNetworkB
+                validateActionStats(aiTable.QNetworkB, "QNetworkB")
             end
             if data.FeatureWeights then
                 aiTable.FeatureWeights = data.FeatureWeights
@@ -1557,20 +1598,33 @@ end
 -- Helper function to find max value in array (safer than table.unpack for large arrays)
 local function FindMax(arr)
     if #arr == 0 then return 0 end
-    local maxVal = arr[1]
-    -- Handle nil first element by defaulting to 0 to maintain arithmetic safety
-    if maxVal == nil then
-        maxVal = 0
-        if CONST and CONST.DEBUG_MODE then
-            warn(string.format("FindMax: First array element is nil, defaulting to 0"))
+    local maxVal = nil
+    
+    -- Find first non-nil, non-NaN value
+    -- Note: NaN check uses the property that NaN != NaN in IEEE 754 standard
+    for i = 1, #arr do
+        if arr[i] ~= nil and arr[i] == arr[i] then -- Check not nil and not NaN (NaN is the only value that doesn't equal itself)
+            maxVal = arr[i]
+            break
         end
     end
-    for i = 2, #arr do
-        -- Only compare non-nil values; skip nil elements
-        if arr[i] and arr[i] > maxVal then
-            maxVal = arr[i]
-        elseif not arr[i] and CONST and CONST.DEBUG_MODE then
-            warn(string.format("FindMax: Array contains nil at index %d", i))
+    
+    -- If all values are nil or NaN, default to 0
+    if maxVal == nil then
+        if CONST and CONST.DEBUG_MODE then
+            warn("FindMax: All array elements are nil or NaN, defaulting to 0")
+        end
+        return 0
+    end
+    
+    -- Find maximum value among non-nil, non-NaN elements
+    for i = 1, #arr do
+        if arr[i] ~= nil and arr[i] == arr[i] then -- Check not nil and not NaN
+            if arr[i] > maxVal then
+                maxVal = arr[i]
+            end
+        elseif CONST and CONST.DEBUG_MODE and arr[i] ~= nil then
+            warn(string.format("FindMax: Array contains NaN at index %d", i))
         end
     end
     return maxVal
@@ -3238,48 +3292,72 @@ local function initializeCombatSystem(character)
       if #AI.MetaLearning.recentRewards >= 12 then
           local recentSum = 0
           local recentVar = 0
+          local validRecentCount = 0
+          
+          -- Sum recent rewards, skipping nil and NaN
           for i = #AI.MetaLearning.recentRewards - 11, #AI.MetaLearning.recentRewards do
-              recentSum += AI.MetaLearning.recentRewards[i]
+              local reward = AI.MetaLearning.recentRewards[i]
+              if reward and reward == reward then -- Check not nil and not NaN
+                  recentSum += reward
+                  validRecentCount += 1
+              end
           end
-          local recentMean = recentSum / 12
           
-          -- Calculate variance for stability analysis
-          for i = #AI.MetaLearning.recentRewards - 11, #AI.MetaLearning.recentRewards do
-              local diff = AI.MetaLearning.recentRewards[i] - recentMean
-              recentVar += diff * diff
-          end
-          recentVar = recentVar / 12
-          
-          local oldSum = 0
-          for i = 1, math.min(12, #AI.MetaLearning.recentRewards - 12) do
-              oldSum += AI.MetaLearning.recentRewards[i]
-          end
-          local oldMean = oldSum / math.min(12, #AI.MetaLearning.recentRewards - 12)
-          AI.MetaLearning.performanceTrend = recentSum - oldSum
-          
-          -- Track stability and improvement trends
-          if recentMean > oldMean then
-              AI.MetaLearning.consecutiveImprovements += 1
+          if validRecentCount < 6 then
+              -- Not enough valid data for meta-learning
+              if CONST and CONST.DEBUG_MODE then
+                  warn("Meta-learning: Not enough valid reward data")
+              end
           else
-              AI.MetaLearning.consecutiveImprovements = 0
-          end
+              local recentMean = recentSum / validRecentCount
+              
+              -- Calculate variance for stability analysis
+              for i = #AI.MetaLearning.recentRewards - 11, #AI.MetaLearning.recentRewards do
+                  local reward = AI.MetaLearning.recentRewards[i]
+                  if reward and reward == reward then -- Check not nil and not NaN
+                      local diff = reward - recentMean
+                      recentVar += diff * diff
+                  end
+              end
+              recentVar = recentVar / validRecentCount
           
-          local stabilityScore = math.max(0, 1 - (recentVar / 30))
-          AI.MetaLearning.learningRateStability = stabilityScore
-          
-          -- Adjust DNN learning rate based on variance and improvement with better thresholds
-          if recentVar < 3.5 and recentMean > 0 then
-              -- Very stable positive performance: increase learning rate more aggressively
-              AI.DeepNetwork.learningRateDNN = math.min(0.0028, AI.DeepNetwork.learningRateDNN * 1.06)
-          elseif recentVar < 7 and AI.MetaLearning.consecutiveImprovements >= 3 then
-              -- Stable and improving: moderate increase
-              AI.DeepNetwork.learningRateDNN = math.min(0.0022, AI.DeepNetwork.learningRateDNN * 1.03)
-          elseif recentVar > 22 then
-              -- High variance: decrease for stability
-              AI.DeepNetwork.learningRateDNN = math.max(0.0005, AI.DeepNetwork.learningRateDNN * 0.92)
-          elseif recentVar > 13 and recentMean < 0 then
-              -- Moderate variance with negative trend: stronger decrease
-              AI.DeepNetwork.learningRateDNN = math.max(0.0006, AI.DeepNetwork.learningRateDNN * 0.94)
+              local oldSum = 0
+              local oldCount = math.min(12, #AI.MetaLearning.recentRewards - 12)
+              local validOldCount = 0
+              for i = 1, oldCount do
+                  local reward = AI.MetaLearning.recentRewards[i]
+                  if reward and reward == reward then -- Check not nil and not NaN
+                      oldSum += reward
+                      validOldCount += 1
+                  end
+              end
+              local oldMean = validOldCount > 0 and (oldSum / validOldCount) or 0
+              AI.MetaLearning.performanceTrend = recentSum - oldSum
+              
+              -- Track stability and improvement trends
+              if recentMean > oldMean then
+                  AI.MetaLearning.consecutiveImprovements += 1
+              else
+                  AI.MetaLearning.consecutiveImprovements = 0
+              end
+              
+              local stabilityScore = math.max(0, 1 - (recentVar / 30))
+              AI.MetaLearning.learningRateStability = stabilityScore
+              
+              -- Adjust DNN learning rate based on variance and improvement with better thresholds
+              if recentVar < 3.5 and recentMean > 0 then
+                  -- Very stable positive performance: increase learning rate more aggressively
+                  AI.DeepNetwork.learningRateDNN = math.min(0.0028, AI.DeepNetwork.learningRateDNN * 1.06)
+              elseif recentVar < 7 and AI.MetaLearning.consecutiveImprovements >= 3 then
+                  -- Stable and improving: moderate increase
+                  AI.DeepNetwork.learningRateDNN = math.min(0.0022, AI.DeepNetwork.learningRateDNN * 1.03)
+              elseif recentVar > 22 then
+                  -- High variance: decrease for stability
+                  AI.DeepNetwork.learningRateDNN = math.max(0.0005, AI.DeepNetwork.learningRateDNN * 0.92)
+              elseif recentVar > 13 and recentMean < 0 then
+                  -- Moderate variance with negative trend: stronger decrease
+                  AI.DeepNetwork.learningRateDNN = math.max(0.0006, AI.DeepNetwork.learningRateDNN * 0.94)
+              end
           end
       end
       
@@ -3290,36 +3368,52 @@ local function initializeCombatSystem(character)
       if #AI.State.recentPerformance >= 6 then
           local perfSum = 0
           local perfVar = 0
+          local validPerfCount = 0
+          
+          -- Sum performance values, skipping nil and NaN
           for _, perf in ipairs(AI.State.recentPerformance) do
-              perfSum += perf
-          end
-          local perfMean = perfSum / #AI.State.recentPerformance
-          
-          -- Calculate variance
-          for _, perf in ipairs(AI.State.recentPerformance) do
-              local diff = perf - perfMean
-              perfVar += diff * diff
-          end
-          perfVar = perfVar / #AI.State.recentPerformance
-          
-          -- Adapt learning rate based on performance stability, trend, and meta-learning stability
-          local stabilityBonus = AI.MetaLearning.learningRateStability * 0.1
-          
-          if perfMean > 6 and perfVar < 8 then
-              -- Excellent stable performance: strong increase with stability bonus
-              learningRate = math.min(CONST.MAX_LEARNING_RATE, learningRate * (1.06 + stabilityBonus))
-          elseif perfMean > 3 and perfVar < 12 then
-              -- Good performance: moderate increase
-              learningRate = math.min(CONST.MAX_LEARNING_RATE, learningRate * (1.04 + stabilityBonus))
-          elseif perfMean < -2 and perfVar > 25 then
-              -- Poor unstable performance: strong decrease
-              learningRate = math.max(CONST.MIN_LEARNING_RATE, learningRate * 0.92)
-          elseif perfMean < 0 or perfVar > 30 then
-              -- Negative or highly unstable: moderate decrease
-              learningRate = math.max(CONST.MIN_LEARNING_RATE, learningRate * 0.94)
+              if perf and perf == perf then -- Check not nil and not NaN
+                  perfSum += perf
+                  validPerfCount += 1
+              end
           end
           
-          AI.State.currentLearningRate = learningRate
+          -- If we don't have enough valid performance data, skip adaptation
+          if validPerfCount < 3 then
+              if CONST and CONST.DEBUG_MODE then
+                  warn("Adaptive learning: Not enough valid performance data, skipping")
+              end
+          else
+              local perfMean = perfSum / validPerfCount
+              
+              -- Calculate variance
+              for _, perf in ipairs(AI.State.recentPerformance) do
+                  if perf and perf == perf then -- Check not nil and not NaN
+                      local diff = perf - perfMean
+                      perfVar += diff * diff
+                  end
+              end
+              perfVar = perfVar / validPerfCount
+          
+              -- Adapt learning rate based on performance stability, trend, and meta-learning stability
+              local stabilityBonus = AI.MetaLearning.learningRateStability * 0.1
+              
+              if perfMean > 6 and perfVar < 8 then
+                  -- Excellent stable performance: strong increase with stability bonus
+                  learningRate = math.min(CONST.MAX_LEARNING_RATE, learningRate * (1.06 + stabilityBonus))
+              elseif perfMean > 3 and perfVar < 12 then
+                  -- Good performance: moderate increase
+                  learningRate = math.min(CONST.MAX_LEARNING_RATE, learningRate * (1.04 + stabilityBonus))
+              elseif perfMean < -2 and perfVar > 25 then
+                  -- Poor unstable performance: strong decrease
+                  learningRate = math.max(CONST.MIN_LEARNING_RATE, learningRate * 0.92)
+              elseif perfMean < 0 or perfVar > 30 then
+                  -- Negative or highly unstable: moderate decrease
+                  learningRate = math.max(CONST.MIN_LEARNING_RATE, learningRate * 0.94)
+              end
+              
+              AI.State.currentLearningRate = learningRate
+          end
       end
       
       -- Use adaptive learning rate for meta-learning as well
@@ -3367,14 +3461,38 @@ local function initializeCombatSystem(character)
       local netReward = rawReward - (actionCost * CONST.COST_PENALTY_FACTOR)
 
       -- Calculate TD error using neural network Q-value
+      -- Safety check: Ensure old_value is never nil to prevent arithmetic errors
+      -- Initialize statsToUpdate.value if nil (fixes corrupted persisted data)
+      if statsToUpdate.value == nil then
+          statsToUpdate.value = 0
+          if CONST and CONST.DEBUG_MODE then
+              warn(string.format("Reinforce: statsToUpdate.value is nil for action %s in tactic %s, initializing to 0", action, tactic))
+          end
+      end
       local old_value = statsToUpdate.value
       local td_error = netReward + CONST.DISCOUNT_FACTOR_GAMMA * nextMaxQValue - old_value
       
       -- Update eligibility trace
+      -- Safety check: Ensure eligibility is never nil
+      if statsToUpdate.eligibility == nil then
+          statsToUpdate.eligibility = 0
+          if CONST and CONST.DEBUG_MODE then
+              warn(string.format("Reinforce: statsToUpdate.eligibility is nil for action %s in tactic %s, initializing to 0", action, tactic))
+          end
+      end
       statsToUpdate.eligibility = statsToUpdate.eligibility * CONST.DISCOUNT_FACTOR_GAMMA * CONST.ELIGIBILITY_LAMBDA + 1
       
       -- Q-Learning update with adaptive learning rate and eligibility traces
       statsToUpdate.value = old_value + learningRate * td_error * statsToUpdate.eligibility
+      
+      -- Ensure count field is initialized
+      if statsToUpdate.count == nil then
+          statsToUpdate.count = 0
+          if CONST and CONST.DEBUG_MODE then
+              warn(string.format("Reinforce: statsToUpdate.count is nil for action %s in tactic %s, initializing to 0", action, tactic))
+          end
+      end
+      statsToUpdate.count += 1
       
       -- Update deep neural networks with proper backpropagation
       if nextState and math.abs(td_error) > 0.01 then
@@ -5316,6 +5434,10 @@ local function initializeCombatSystem(character)
           -- Track damage dealt
           if cloneState.targetHumanoid then
               local currentTargetHealth = cloneState.targetHumanoid.Health
+              -- Safety check: Ensure lastTargetHealth is initialized for clone
+              if cloneState.lastTargetHealth == nil then
+                  cloneState.lastTargetHealth = currentTargetHealth
+              end
               local damageDealt = cloneState.lastTargetHealth - currentTargetHealth
               if damageDealt > 0 then
                   cloneState.lastDamageDealtTime = now
@@ -5672,6 +5794,13 @@ local function initializeCombatSystem(character)
 
       -- Damage dealt evaluation with hybrid learning and feature weight adaptation
       local currentTargetHealth = AI.State.targetHumanoid.Health
+      -- Safety check: Ensure lastTargetHealth is initialized
+      if AI.State.lastTargetHealth == nil then
+          AI.State.lastTargetHealth = currentTargetHealth
+          if CONST and CONST.DEBUG_MODE then
+              warn("UpdateLearningAndRewards: lastTargetHealth was nil, initialized to current target health")
+          end
+      end
       local damageDealt = AI.State.lastTargetHealth - currentTargetHealth
       if damageDealt > 0 then
           -- Track when damage was dealt
@@ -6019,6 +6148,14 @@ local function initializeCombatSystem(character)
 
   --// ================= EVENT CONNECTIONS ================= //
   table.insert(connections, humanoid.HealthChanged:Connect(function(newHealth)
+      -- Safety check: Ensure myHealth is initialized
+      if AI.State.myHealth == nil then
+          AI.State.myHealth = humanoid.Health or newHealth
+          if CONST and CONST.DEBUG_MODE then
+              warn("HealthChanged: AI.State.myHealth was nil, initialized to current health")
+          end
+      end
+      
       local damageTaken = AI.State.myHealth - newHealth
       
       -- Build current state
