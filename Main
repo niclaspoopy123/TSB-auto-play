@@ -3510,7 +3510,8 @@ local function initializeCombatSystem(character)
           if available then
               local statsA = tacticStatsA[action]
               local statsB = tacticStatsB[action]
-              if statsA and statsA.count > 0 and statsB and statsB.count > 0 then
+              if statsA and statsA.count and statsA.count > 0 and statsA.value and 
+                 statsB and statsB.count and statsB.count > 0 and statsB.value then
                   local qValueA = statsA.value / statsA.count
                   local qValueB = statsB.value / statsB.count
                   -- Average both Q-networks (Double Q-Learning)
@@ -3519,7 +3520,7 @@ local function initializeCombatSystem(character)
                       maxQ = qValue
                       foundAction = true
                   end
-              elseif statsA and statsA.count > 0 then
+              elseif statsA and statsA.count and statsA.count > 0 and statsA.value then
                   local qValue = statsA.value / statsA.count
                   if qValue > maxQ then
                       maxQ = qValue
@@ -3873,7 +3874,9 @@ local function initializeCombatSystem(character)
       local expectedReward = 0
       if AI.HybridModel.rewardModel[transitionKey] then
           local model = AI.HybridModel.rewardModel[transitionKey]
-          expectedReward = model.sum / model.count
+          if model.count and model.count > 0 and model.sum then
+              expectedReward = model.sum / model.count
+          end
       end
       
       -- Simple recursive planning (limited depth)
@@ -4345,13 +4348,13 @@ local function initializeCombatSystem(character)
               local actionIdx = actionMap[action]
               local score
               
-              if statsA.count == 0 then
+              if not statsA.count or not statsA.value or statsA.count == 0 then
                   -- Use deep network prediction for untried actions
                   score = CONST.UNTRIED_ACTION_SCORE + (dnnQValues[actionIdx] or 0) * 10
               else
                   -- Hybrid approach: Combine tabular Q-learning with deep network
                   local qValueA = statsA.value / statsA.count
-                  local qValueB = (statsB and statsB.count > 0) and (statsB.value / statsB.count) or qValueA
+                  local qValueB = (statsB and statsB.count and statsB.value and statsB.count > 0) and (statsB.value / statsB.count) or qValueA
                   local tabularQ = (qValueA + qValueB) / 2
                   
                   -- Deep network Q-value (ensemble average with nil checks)
@@ -4664,7 +4667,7 @@ local function initializeCombatSystem(character)
                   action = action, 
                   score = score * modifier,
                   count = statsA.count,
-                  rawQ = (statsA.count > 0) and (statsA.value / statsA.count) or 0
+                  rawQ = (statsA.count and statsA.count > 0 and statsA.value) and (statsA.value / statsA.count) or 0
               })
           end
       end
