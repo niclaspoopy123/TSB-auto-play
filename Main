@@ -5424,6 +5424,10 @@ local function initializeCombatSystem(character)
           -- Track damage dealt
           if cloneState.targetHumanoid then
               local currentTargetHealth = cloneState.targetHumanoid.Health
+              -- Safety check: Ensure lastTargetHealth is initialized for clone
+              if cloneState.lastTargetHealth == nil then
+                  cloneState.lastTargetHealth = currentTargetHealth
+              end
               local damageDealt = cloneState.lastTargetHealth - currentTargetHealth
               if damageDealt > 0 then
                   cloneState.lastDamageDealtTime = now
@@ -5780,6 +5784,13 @@ local function initializeCombatSystem(character)
 
       -- Damage dealt evaluation with hybrid learning and feature weight adaptation
       local currentTargetHealth = AI.State.targetHumanoid.Health
+      -- Safety check: Ensure lastTargetHealth is initialized
+      if AI.State.lastTargetHealth == nil then
+          AI.State.lastTargetHealth = currentTargetHealth
+          if CONST and CONST.DEBUG_MODE then
+              warn("UpdateLearningAndRewards: lastTargetHealth was nil, initialized to current target health")
+          end
+      end
       local damageDealt = AI.State.lastTargetHealth - currentTargetHealth
       if damageDealt > 0 then
           -- Track when damage was dealt
@@ -6127,6 +6138,14 @@ local function initializeCombatSystem(character)
 
   --// ================= EVENT CONNECTIONS ================= //
   table.insert(connections, humanoid.HealthChanged:Connect(function(newHealth)
+      -- Safety check: Ensure myHealth is initialized
+      if AI.State.myHealth == nil then
+          AI.State.myHealth = humanoid.Health or newHealth
+          if CONST and CONST.DEBUG_MODE then
+              warn("HealthChanged: AI.State.myHealth was nil, initialized to current health")
+          end
+      end
+      
       local damageTaken = AI.State.myHealth - newHealth
       
       -- Build current state
