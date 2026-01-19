@@ -648,15 +648,25 @@ local AutoParry = {
     enabled = false, -- Controlled by CombatConfig.AutoParry
     lastParryTime = 0,
     parryDelay = 0.5, -- Minimum delay between parries
-    monitoredAnimations = {}, -- Track animations being monitored
+    scheduledParryTime = 0, -- When to execute scheduled parry
+    isParryScheduled = false,
     
-    -- Monitor opponent animations for parrying
+    -- Monitor opponent animations for parrying (non-blocking)
     monitorAnimation = function()
         if not CombatConfig.AutoParry then return false end
         if not AI.State or not AI.State.currentTarget then return false end
         
         local now = os.clock()
         if now - AutoParry.lastParryTime < AutoParry.parryDelay then return false end
+        
+        -- Execute scheduled parry if time has come
+        if AutoParry.isParryScheduled and now >= AutoParry.scheduledParryTime then
+            AutoParry.isParryScheduled = false
+            return AutoParry.executeParry()
+        end
+        
+        -- Don't schedule new parry if one is already scheduled
+        if AutoParry.isParryScheduled then return false end
         
         local targetChar = AI.State.currentTarget
         local animator = targetChar:FindFirstChild("Humanoid") and targetChar.Humanoid:FindFirstChild("Animator")
@@ -674,7 +684,15 @@ local AutoParry = {
                         local parryTiming = windupTime - 0.15
                         
                         if parryTiming > 0 then
-                            task.wait(parryTiming)
+                            -- Schedule parry for later
+                            AutoParry.scheduledParryTime = now + parryTiming
+                            AutoParry.isParryScheduled = true
+                            if CONST and CONST.DEBUG_MODE then
+                                print("🛡️ AUTO-PARRY scheduled for", moveType, "in", parryTiming, "seconds")
+                            end
+                            return true
+                        else
+                            -- Execute immediately if timing is already passed
                             return AutoParry.executeParry()
                         end
                     end
@@ -700,6 +718,7 @@ local AutoParry = {
         return true
     end
 }
+
 
 --// ================= WAKE-UP TECH SYSTEM ================= //
 local WakeUpTech = {
@@ -6377,6 +6396,11 @@ local function initializeCombatSystem(character)
       if CombatConfig.GodMode and CombatTech.godModeCheck() then
           CombatTech.forceSideDash()
           return -- Skip normal action after god mode reaction
+      end
+      
+      -- Auto-Parry Check: Monitor for attack animations
+      if CombatConfig.AutoParry then
+          AutoParry.monitorAnimation()
       end
       
       -- Wake-Up Tech Check
