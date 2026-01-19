@@ -5,7 +5,7 @@
 
 local PretrainedData = {
     -- Version for compatibility checking
-    Version = "1.0",
+    Version = "1.0.0",
     
     -- Default Action Statistics (Q-values for each tactic)
     ActionStats = {

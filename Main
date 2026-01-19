@@ -708,8 +708,13 @@ local AutoParry = {
         
         -- Press block key (F)
         communicateEvent:FireServer({["Goal"]="KeyPress", ["Key"]=Enum.KeyCode.F})
-        task.wait(0.1) -- Hold briefly for parry window
-        communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=Enum.KeyCode.F})
+        
+        -- Schedule key release without blocking (non-blocking approach)
+        task.delay(0.1, function()
+            if communicateEvent then
+                communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=Enum.KeyCode.F})
+            end
+        end)
         
         AutoParry.lastParryTime = os.clock()
         if CONST and CONST.DEBUG_MODE then
@@ -749,17 +754,20 @@ local WakeUpTech = {
             if communicateEvent then
                 local techChoice = math.random()
                 if techChoice < 0.7 then
-                    -- 70% - Side dash for safety
+                    -- 70% - Side dash for safety (instant, no blocking)
                     local sideDir = math.random() > 0.5 and Enum.KeyCode.A or Enum.KeyCode.D
                     communicateEvent:FireServer({["Dash"]=sideDir, ["Key"]=Enum.KeyCode.Q, ["Goal"]="KeyPress"})
                     if CONST and CONST.DEBUG_MODE then
                         print("🌟 WAKE-UP TECH: Side dash executed!")
                     end
                 else
-                    -- 30% - Counter attack (if available)
+                    -- 30% - Counter attack (non-blocking key press/release)
                     communicateEvent:FireServer({["Goal"]="KeyPress", ["Key"]=Enum.KeyCode.F})
-                    task.wait(0.05)
-                    communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=Enum.KeyCode.F})
+                    task.delay(0.05, function()
+                        if communicateEvent then
+                            communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=Enum.KeyCode.F})
+                        end
+                    end)
                     if CONST and CONST.DEBUG_MODE then
                         print("🌟 WAKE-UP TECH: Counter executed!")
                     end
@@ -6409,10 +6417,16 @@ local function initializeCombatSystem(character)
       end
       
       -- Win Probability Meta-Controller
-      if CombatConfig.WinProbabilityEnabled then
-          local myHP = myHealthPercent * (humanoid.MaxHealth or 100)
-          local enemyHP = targetHealthPercent * (AI.State.targetHumanoid.MaxHealth or 100)
-          local winProb = myHP / (myHP + enemyHP + 0.001) -- Add small value to prevent division by zero
+      if CombatConfig.WinProbabilityEnabled and AI.State.targetHumanoid then
+          -- Safe HP calculation with proper null checks
+          local myMaxHealth = humanoid and humanoid.MaxHealth or 100
+          local enemyMaxHealth = AI.State.targetHumanoid and AI.State.targetHumanoid.MaxHealth or 100
+          local myHP = myHealthPercent * myMaxHealth
+          local enemyHP = targetHealthPercent * enemyMaxHealth
+          
+          -- Prevent division by zero and handle edge cases
+          local totalHP = myHP + enemyHP
+          local winProb = totalHP > 0 and (myHP / totalHP) or 0.5 -- Default to 50% if both dead
           AI.State.lastWinProbability = winProb
           
           -- Adjust playstyle based on win probability
