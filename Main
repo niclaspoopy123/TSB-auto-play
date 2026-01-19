@@ -2273,6 +2273,8 @@ local function initializeCombatSystem(character)
           lastPerformanceCheck = 0,
           performanceSimplified = false, -- True if calculations are simplified due to low FPS
           recentFrameTimes = {}, -- Track last 30 frame times for FPS calculation
+          performanceConfig = nil, -- Performance-aware intervals (nil = use CONST values)
+          originalUpdateIntervals = nil, -- Store original intervals for restoration
           -- ML-enhanced dash tracking
           lastDashDirection = nil,
           lastDashScore = 0,
@@ -5829,11 +5831,22 @@ local function initializeCombatSystem(character)
   local function UpdateRaycasts()
       local now = os.clock()
       
+      -- Use performance-aware interval
+      local raycastInterval = CONST.RAYCAST_UPDATE_INTERVAL
+      if AI.State.performanceConfig and AI.State.performanceConfig.raycastInterval then
+          raycastInterval = AI.State.performanceConfig.raycastInterval
+      end
+      
       -- Throttle raycast updates for performance
-      if now - AI.State.lastRaycastUpdate < CONST.RAYCAST_UPDATE_INTERVAL then
+      if now - AI.State.lastRaycastUpdate < raycastInterval then
           return
       end
       AI.State.lastRaycastUpdate = now
+      
+      -- Safety check: ensure rootPart exists
+      if not rootPart or not rootPart.Parent then
+          return
+      end
       
       -- Cast rays in 8 directions around the character
       local raycastParams = RaycastParams.new()
@@ -5944,20 +5957,33 @@ local function initializeCombatSystem(character)
           
           if shouldSimplify and not AI.State.performanceSimplified then
               AI.State.performanceSimplified = true
-              -- Reduce update frequencies
-              CONST.RAYCAST_UPDATE_INTERVAL = 0.5 -- Slower raycasts
-              CONST.TARGET_SCAN_INTERVAL = 0.5 -- Slower target scanning
-              print(`⚠️ Low FPS detected (${string.format("%.1f", currentFPS)}). Simplifying calculations.`)
+              -- Store original values if not already stored
+              if not AI.State.originalUpdateIntervals then
+                  AI.State.originalUpdateIntervals = {
+                      raycast = CONST.RAYCAST_UPDATE_INTERVAL,
+                      targetScan = CONST.TARGET_SCAN_INTERVAL,
+                  }
+              end
+              -- Use local performance config instead of modifying CONST
+              AI.State.performanceConfig = {
+                  raycastInterval = 0.5,
+                  targetScanInterval = 0.5,
+              }
+              print(string.format("⚠️ Low FPS detected (%.1f). Simplifying calculations.", currentFPS))
           elseif not shouldSimplify and AI.State.performanceSimplified then
               AI.State.performanceSimplified = false
-              -- Restore update frequencies
-              CONST.RAYCAST_UPDATE_INTERVAL = 0.2
-              CONST.TARGET_SCAN_INTERVAL = 0.3
-              print(`✅ FPS recovered (${string.format("%.1f", currentFPS)}). Restoring full calculations.`)
+              -- Restore original values
+              if AI.State.originalUpdateIntervals then
+                  AI.State.performanceConfig = {
+                      raycastInterval = AI.State.originalUpdateIntervals.raycast,
+                      targetScanInterval = AI.State.originalUpdateIntervals.targetScan,
+                  }
+              end
+              print(string.format("✅ FPS recovered (%.1f). Restoring full calculations.", currentFPS))
           end
           
           if CONST.DEBUG_MODE then
-              print(`FPS: ${string.format("%.1f", currentFPS)} (Simplified: ${AI.State.performanceSimplified})`)
+              print(string.format("FPS: %.1f (Simplified: %s)", currentFPS, tostring(AI.State.performanceSimplified)))
           end
       end
   end
@@ -5966,7 +5992,13 @@ local function initializeCombatSystem(character)
       local now = os.clock()
       AI.State.currentEnergy = math.min(CONST.MAX_ENERGY, AI.State.currentEnergy + CONST.ENERGY_REGEN_RATE * deltaTime)
 
-      if now - AI.State.lastTargetScanTime > CONST.TARGET_SCAN_INTERVAL then
+      -- Use performance-aware interval
+      local targetScanInterval = CONST.TARGET_SCAN_INTERVAL
+      if AI.State.performanceConfig and AI.State.performanceConfig.targetScanInterval then
+          targetScanInterval = AI.State.performanceConfig.targetScanInterval
+      end
+
+      if now - AI.State.lastTargetScanTime > targetScanInterval then
           EvaluateAndSetTarget()
           AI.State.lastTargetScanTime = now
       end
