@@ -2188,6 +2188,15 @@ local function initializeCombatSystem(character)
       -- Ping/Latency Adaptation (#8)
       PING_UPDATE_INTERVAL = 1.0, -- How often to update ping (seconds)
       PING_PREDICTION_MULTIPLIER = 0.35, -- Base multiplier for ping-based prediction
+      -- Safe Exploration (#5)
+      SAFE_EXPLORATION_ENABLED = true, -- Enable HP-based exploration control
+      SAFE_EXPLORATION_HIGH_HP_THRESHOLD = 0.5, -- Allow exploration above this HP (50%)
+      SAFE_EXPLORATION_LOW_HP_THRESHOLD = 0.3, -- Force exploitation below this HP (30%)
+      -- Enemy Cooldown Estimation (#14)
+      ENEMY_ATTACK_COOLDOWN_ESTIMATE = 0.3, -- Estimated enemy attack cooldown
+      ENEMY_SPECIAL_COOLDOWN_ESTIMATE = 1.5, -- Estimated enemy special cooldown
+      ENEMY_DASH_COOLDOWN_ESTIMATE = 0.1, -- Estimated enemy dash cooldown
+      ENEMY_BLOCK_COOLDOWN_ESTIMATE = 0.8, -- Estimated enemy block cooldown
   }
 
   --// --- STATE MANAGEMENT ---
@@ -2243,6 +2252,19 @@ local function initializeCombatSystem(character)
           -- Ping/Latency Adaptation (#8)
           currentPing = 0, -- Network ping in seconds
           lastPingUpdate = 0,
+          -- Enemy Cooldown Estimation (#14)
+          enemyCooldowns = {
+              ATTACK = 1.0, -- Estimate: enemy attack ready (0-1 scale, 1 = ready)
+              SPECIAL = 1.0, -- Estimate: enemy special ready
+              DASH = 1.0, -- Estimate: enemy dash ready
+              BLOCK = 1.0, -- Estimate: enemy block ready
+          },
+          enemyLastActionTimes = {
+              ATTACK = 0,
+              SPECIAL = 0,
+              DASH = 0,
+              BLOCK = 0,
+          },
           -- ML-enhanced dash tracking
           lastDashDirection = nil,
           lastDashScore = 0,
@@ -4649,6 +4671,26 @@ local function initializeCombatSystem(character)
                   modifier *= 1.7 -- Increased for defensive tactics
               end
               
+              -- ENEMY COOLDOWN ESTIMATION (#14): Be more aggressive when enemy abilities are on cooldown
+              if action == "ATTACK" or action == "SPECIAL" then
+                  -- Increase aggression when enemy can't retaliate effectively
+                  if not state.enemyAttackReady and not state.enemySpecialReady then
+                      modifier *= 1.4 -- Strong bonus when enemy has no offensive options
+                      if CONST.DEBUG_MODE then
+                          print(`⚡ Enemy abilities on cooldown! Boosting ${action}`)
+                      end
+                  elseif not state.enemyAttackReady then
+                      modifier *= 1.2 -- Moderate bonus when enemy can't attack
+                  end
+              end
+              
+              if action == "EVADE" then
+                  -- Be more cautious when enemy abilities are ready
+                  if state.enemyAttackReady or state.enemySpecialReady then
+                      modifier *= 1.3 -- Increase dodge priority when enemy can attack
+                  end
+              end
+              
               -- DASH action modifiers - aggressive repositioning and tech usage
               if action == "DASH" then
                   if tactic == "Aggressive" or tactic == "Finisher" then
@@ -4896,7 +4938,32 @@ local function initializeCombatSystem(character)
       if #actionScores == 0 then return "REPOSITION" end
 
       -- Apply exploration strategy
-      if explorationMode == "epsilon-greedy" and math.random() < AI.State.epsilon then
+      -- SAFE EXPLORATION (#5): HP-based exploration strategy
+      -- Only allow exploration when HP > 50%, force exploitation when HP < 30%
+      local canExplore = true
+      
+      if CONST.SAFE_EXPLORATION_ENABLED then
+          if state.myHealthPercent < CONST.SAFE_EXPLORATION_LOW_HP_THRESHOLD then
+              -- Low HP (<30%): Force exploitation (use best known action)
+              canExplore = false
+              if CONST.DEBUG_MODE then
+                  print("⚠️ Low HP: Forcing EXPLOITATION (no random actions)")
+              end
+          elseif state.myHealthPercent < CONST.SAFE_EXPLORATION_HIGH_HP_THRESHOLD then
+              -- Medium HP (30-50%): Reduce exploration by 70%
+              if AI.State.epsilon then
+                  local originalEpsilon = AI.State.epsilon
+                  AI.State.epsilon = AI.State.epsilon * 0.3
+                  if CONST.DEBUG_MODE then
+                      print(string.format("⚠️ Medium HP: Reducing exploration from %.2f to %.2f", originalEpsilon, AI.State.epsilon))
+                  end
+              end
+          end
+          -- High HP (>50%): Normal exploration
+      end
+      
+      -- Exploration decision with safe exploration
+      if canExplore and explorationMode == "epsilon-greedy" and math.random() < AI.State.epsilon then
           -- Epsilon-greedy: Random action
           return actionScores[math.random(#actionScores)].action
       elseif explorationMode == "policy-gradient" or explorationMode == "aggressive-policy" then
@@ -5823,6 +5890,19 @@ local function initializeCombatSystem(character)
           print(`⚠️ High ping detected: {string.format("%.0f", AI.State.currentPing * 1000)}ms`)
       end
   end
+  
+  -- ENEMY COOLDOWN ESTIMATION (#14): Track and estimate enemy ability cooldowns
+  local function UpdateEnemyCooldowns(deltaTime)
+      -- Update cooldown estimates based on time passed
+      for ability, lastTime in pairs(AI.State.enemyLastActionTimes) do
+          local now = os.clock()
+          local timeSinceUse = now - lastTime
+          local estimatedCooldown = CONST["ENEMY_" .. ability .. "_COOLDOWN_ESTIMATE"] or 1.0
+          
+          -- Calculate readiness (0 = on cooldown, 1 = ready)
+          AI.State.enemyCooldowns[ability] = math.min(1.0, timeSinceUse / estimatedCooldown)
+      end
+  end
 
   local function UpdateAIState(deltaTime)
       local now = os.clock()
@@ -5847,6 +5927,9 @@ local function initializeCombatSystem(character)
               AI.State.opponentActionTime = now
               -- Track behavior change for volatility
               AI.Learning.UpdateVolatility(0.3) -- Attack = moderate change
+              -- ENEMY COOLDOWN ESTIMATION (#14): Track enemy action usage
+              AI.State.enemyLastActionTimes.ATTACK = now
+              AI.State.enemyCooldowns.ATTACK = 0 -- Reset to on cooldown
           elseif AI.State.targetTorso then
               local velocity = AI.State.targetTorso.AssemblyLinearVelocity
               local targetVelocity = velocity and velocity.Magnitude or 0
@@ -5858,6 +5941,9 @@ local function initializeCombatSystem(character)
                   AI.State.opponentActionTime = now
                   -- Track behavior change for volatility
                   AI.Learning.UpdateVolatility(0.6) -- Evade = high change
+                  -- ENEMY COOLDOWN ESTIMATION (#14): Track enemy dash usage
+                  AI.State.enemyLastActionTimes.DASH = now
+                  AI.State.enemyCooldowns.DASH = 0 -- Reset to on cooldown
               end
           end
       else
@@ -5871,6 +5957,9 @@ local function initializeCombatSystem(character)
       
       -- Update ping/latency (#8)
       UpdatePing()
+      
+      -- Update enemy cooldown estimation (#14)
+      UpdateEnemyCooldowns(deltaTime)
       
       -- Periodically save character model (every 100 trials)
       if AI.ActionStats.totalTrials > 0 and AI.ActionStats.totalTrials % 100 == 0 then
@@ -6261,6 +6350,11 @@ local function initializeCombatSystem(character)
           wallRaycasts = AI.State.wallRaycasts,
           -- Ping/Latency (#8)
           currentPing = AI.State.currentPing,
+          -- Enemy Cooldown Estimation (#14)
+          enemyCooldowns = AI.State.enemyCooldowns,
+          enemyAttackReady = AI.State.enemyCooldowns.ATTACK > 0.9,
+          enemySpecialReady = AI.State.enemyCooldowns.SPECIAL > 0.9,
+          enemyDashReady = AI.State.enemyCooldowns.DASH > 0.9,
       }
       
       -- Check target ragdoll/stunned state (for ultimate timing)
