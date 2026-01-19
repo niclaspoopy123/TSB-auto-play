@@ -6353,8 +6353,11 @@ local function initializeCombatSystem(character)
           if shouldAwaken and (now - AI.State.lastActionTimes.AWAKEN) > CONST.AWAKEN_COOLDOWN then
               if communicateEvent then
                   communicateEvent:FireServer({["Goal"]="KeyPress", ["Key"]=CONST.AWAKEN_KEY})
-                  task.wait(0.1) -- Brief wait for activation
-                  communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=CONST.AWAKEN_KEY})
+                  task.delay(0.1, function()
+                      if communicateEvent then
+                          communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=CONST.AWAKEN_KEY})
+                      end
+                  end)
               end
               AI.State.lastActionTimes.AWAKEN = now
               AI.State.awakenAttempted = true
@@ -6390,8 +6393,11 @@ local function initializeCombatSystem(character)
           if shouldUseUltimate and state.energy >= CONST.ULTIMATE_ENERGY_COST then
               if communicateEvent then
                   communicateEvent:FireServer({["Goal"]="KeyPress", ["Key"]=CONST.ULTIMATE_KEY})
-                  task.wait(0.1) -- Brief wait for activation
-                  communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=CONST.ULTIMATE_KEY})
+                  task.delay(0.1, function()
+                      if communicateEvent then
+                          communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=CONST.ULTIMATE_KEY})
+                      end
+                  end)
               end
               AI.State.lastUltimateTime = now
               AI.State.currentEnergy -= CONST.ULTIMATE_ENERGY_COST
@@ -6454,8 +6460,11 @@ local function initializeCombatSystem(character)
                      state.energy >= CONST.ULTIMATE_ENERGY_COST and distance < CONST.ATTACK_RANGE * 1.5 then
                       if communicateEvent then
                           communicateEvent:FireServer({["Goal"]="KeyPress", ["Key"]=CONST.ULTIMATE_KEY})
-                          task.wait(0.1)
-                          communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=CONST.ULTIMATE_KEY})
+                          task.delay(0.1, function()
+                              if communicateEvent then
+                                  communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=CONST.ULTIMATE_KEY})
+                              end
+                          end)
                       end
                       AI.State.lastUltimateTime = now
                       AI.State.currentEnergy -= CONST.ULTIMATE_ENERGY_COST
