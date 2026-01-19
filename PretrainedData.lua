@@ -2,6 +2,22 @@
 -- PRETRAINED DATA FOR TSB AUTO-PLAY
 -- This file contains default weights and statistics for the AI when no save file exists
 -- =================================================================================
+--[[
+    VERSION INFORMATION:
+    - Version format: MAJOR.MINOR.PATCH (Semantic Versioning)
+    - MAJOR: Incompatible changes (structure changes)
+    - MINOR: New features (backward compatible)
+    - PATCH: Bug fixes (backward compatible)
+    
+    Current Version: 1.0.0
+    - Initial release with default weights for all tactics
+    - Compatible with Main script V37.3+
+    
+    Future compatibility checking:
+    - When loading, Main script can check PretrainedData.Version
+    - If major version differs, skip loading and use defaults
+    - Log warning if minor/patch version differs
+]]
 
 local PretrainedData = {
     -- Version for compatibility checking

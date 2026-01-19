@@ -222,10 +222,22 @@ local LocalPersistence = {
             -- Check if file exists
             if not isfile(self.filename) then
                 print("ℹ️ No previous data found - Loading pretrained defaults")
-                -- Try to load PretrainedData module
-                local pretrainedSuccess, PretrainedData = pcall(function()
-                    return require(script.Parent.PretrainedData)
-                end)
+                -- Try to load PretrainedData module with multiple path attempts
+                local pretrainedSuccess, PretrainedData = false, nil
+                
+                -- Try different possible locations for PretrainedData
+                local possiblePaths = {
+                    function() return require(script.Parent.PretrainedData) end,
+                    function() return require(script.PretrainedData) end,
+                    function() return require(game.StarterPlayer.StarterPlayerScripts.PretrainedData) end,
+                }
+                
+                for _, pathFunc in ipairs(possiblePaths) do
+                    pretrainedSuccess, PretrainedData = pcall(pathFunc)
+                    if pretrainedSuccess and PretrainedData then
+                        break
+                    end
+                end
                 
                 if pretrainedSuccess and PretrainedData then
                     -- Load default weights from PretrainedData
@@ -252,7 +264,9 @@ local LocalPersistence = {
                     end
                     print("✅ Pretrained data loaded successfully")
                 else
-                    print("⚠️ PretrainedData not available - AI will start fresh")
+                    print("⚠️ PretrainedData module not found in expected locations")
+                    print("   Place PretrainedData.lua in the same folder as Main script")
+                    print("   AI will start with default initialization")
                 end
                 return false
             end
@@ -468,10 +482,8 @@ local function PerformAntiAFKAction()
             end
         end,
         function() -- Crouch (if available)
-            -- Some games use C for crouch, this is a generic action
-            if character then
-                task.wait(0.1)
-            end
+            -- Some games use C for crouch, this is a generic placeholder action
+            -- No actual input needed, just a delay slot
         end
     }
     
