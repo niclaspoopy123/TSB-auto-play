@@ -2180,42 +2180,6 @@ local function initializeCombatSystem(character)
       TARGET_RAGDOLL_CHECK_INTERVAL = 0.2, -- How often to check target ragdoll state
       AWAKEN_ENERGY_COST = 0, -- Energy cost to awaken (usually free)
       ULTIMATE_ENERGY_COST = 50, -- Energy cost for ultimate
-      -- Raycast/Map Awareness (#7)
-      RAYCAST_DISTANCE = 30, -- Distance to check for walls (studs)
-      RAYCAST_UPDATE_INTERVAL = 0.2, -- How often to update raycasts (seconds)
-      RAYCAST_DIRECTIONS = 8, -- Number of raycasts around character
-      RAYCAST_DIR_RIGHT = 1,
-      RAYCAST_DIR_LEFT = 2,
-      RAYCAST_DIR_FORWARD = 3,
-      RAYCAST_DIR_BACKWARD = 4,
-      RAYCAST_DIR_FORWARD_RIGHT = 5,
-      RAYCAST_DIR_FORWARD_LEFT = 6,
-      RAYCAST_DIR_BACKWARD_RIGHT = 7,
-      RAYCAST_DIR_BACKWARD_LEFT = 8,
-      CORNERED_WALL_THRESHOLD = 5, -- Number of wall hits to consider cornered
-      -- Ping/Latency Adaptation (#8)
-      PING_UPDATE_INTERVAL = 1.0, -- How often to update ping (seconds)
-      PING_PREDICTION_MULTIPLIER = 0.35, -- Base multiplier for ping-based prediction
-      -- Safe Exploration (#5)
-      SAFE_EXPLORATION_ENABLED = true, -- Enable HP-based exploration control
-      SAFE_EXPLORATION_HIGH_HP_THRESHOLD = 0.5, -- Allow exploration above this HP (50%)
-      SAFE_EXPLORATION_LOW_HP_THRESHOLD = 0.3, -- Force exploitation below this HP (30%)
-      -- Enemy Cooldown Estimation (#14)
-      ENEMY_ATTACK_COOLDOWN_ESTIMATE = 0.3, -- Estimated enemy attack cooldown
-      ENEMY_SPECIAL_COOLDOWN_ESTIMATE = 1.5, -- Estimated enemy special cooldown
-      ENEMY_DASH_COOLDOWN_ESTIMATE = 0.1, -- Estimated enemy dash cooldown
-      ENEMY_BLOCK_COOLDOWN_ESTIMATE = 0.8, -- Estimated enemy block cooldown
-      ENEMY_ABILITY_READY_THRESHOLD = 0.9, -- Threshold for considering ability ready (0-1)
-      ENEMY_COOLDOWNS = { -- Table for cleaner lookup
-          ATTACK = 0.3,
-          SPECIAL = 1.5,
-          DASH = 0.1,
-          BLOCK = 0.8,
-      },
-      -- Performance Profiler (#20)
-      PERFORMANCE_PROFILER_ENABLED = true, -- Enable performance monitoring
-      PERFORMANCE_LOW_FPS_THRESHOLD = 40, -- FPS below this triggers simplification
-      PERFORMANCE_CHECK_INTERVAL = 5.0, -- Check performance every 5 seconds
   }
 
   --// --- STATE MANAGEMENT ---
@@ -2264,32 +2228,6 @@ local function initializeCombatSystem(character)
           lastComboTime = 0,
           consecutiveHits = 0,
           lastDamageDealtTime = 0,
-          -- Raycast/Map Awareness (#7)
-          wallRaycasts = {}, -- Store raycast results for 8 directions
-          isCornered = false, -- True if surrounded by walls
-          lastRaycastUpdate = 0, -- Last time raycasts were updated
-          -- Ping/Latency Adaptation (#8)
-          currentPing = 0, -- Network ping in seconds
-          lastPingUpdate = 0,
-          -- Enemy Cooldown Estimation (#14)
-          enemyCooldowns = {
-              ATTACK = 1.0, -- Estimate: enemy attack ready (0-1 scale, 1 = ready)
-              SPECIAL = 1.0, -- Estimate: enemy special ready
-              DASH = 1.0, -- Estimate: enemy dash ready
-              BLOCK = 1.0, -- Estimate: enemy block ready
-          },
-          enemyLastActionTimes = {
-              ATTACK = 0,
-              SPECIAL = 0,
-              DASH = 0,
-              BLOCK = 0,
-          },
-          -- Performance Profiler (#20)
-          lastPerformanceCheck = 0,
-          performanceSimplified = false, -- True if calculations are simplified due to low FPS
-          recentFrameTimes = {}, -- Track last 30 frame times for FPS calculation
-          performanceConfig = nil, -- Performance-aware intervals (nil = use CONST values)
-          originalUpdateIntervals = nil, -- Store original intervals for restoration
           -- ML-enhanced dash tracking
           lastDashDirection = nil,
           lastDashScore = 0,
@@ -4486,80 +4424,16 @@ local function initializeCombatSystem(character)
           end
       end
 
-      -- ACTION MASKING (#3): Invalid Action Prevention Layer
-      -- This prevents the AI from wasting time trying impossible actions
-      local function isActionMasked(action)
-          -- Ensure action is uppercase for consistency
-          local actionUpper = action:upper()
-          
-          -- Mask attacking actions if stunned/ragdolled
-          if humanoid then
-              local humanoidState = humanoid:GetState()
-              if humanoidState == Enum.HumanoidStateType.Ragdoll or 
-                 humanoidState == Enum.HumanoidStateType.FallingDown or
-                 humanoidState == Enum.HumanoidStateType.Flying then
-                  if actionUpper == "ATTACK" or actionUpper == "SPECIAL" or actionUpper == "BLOCK" then
-                      return true -- Cannot attack/block while stunned
-                  end
-              end
-          end
-          
-          -- Mask actions on cooldown (hard constraint)
-          if actionUpper == "ATTACK" and (now - AI.State.lastActionTimes.ATTACK <= CONST.ATTACK_COOLDOWN) then
-              return true
-          end
-          if actionUpper == "SPECIAL" and (now - AI.State.lastActionTimes.SPECIAL <= CONST.SPECIAL_MOVE_COOLDOWN) then
-              return true
-          end
-          if actionUpper == "EVADE" and (now - AI.State.lastActionTimes.EVADE <= CONST.DASH_COOLDOWN) then
-              return true
-          end
-          if actionUpper == "DASH" and (now - AI.State.lastActionTimes.DASH <= CONST.DASH_COOLDOWN) then
-              return true
-          end
-          if actionUpper == "FEINT" and (now - AI.State.lastActionTimes.FEINT <= CONST.FEINT_COOLDOWN) then
-              return true
-          end
-          if actionUpper == "BLOCK" and (now - AI.State.lastActionTimes.BLOCK <= CONST.BLOCK_COOLDOWN) then
-              return true
-          end
-          
-          -- Mask actions without enough energy (hard constraint)
-          local energyCost = CONST.COSTS[actionUpper] or 0
-          if state.energy < energyCost then
-              return true
-          end
-          
-          -- Mask range-dependent actions
-          if (actionUpper == "ATTACK" or actionUpper == "SPECIAL" or actionUpper == "FEINT") and not state.inRange then
-              return true
-          end
-          
-          -- Mask SPECIAL if no moves available (check AI.AvailableMoves from parent scope)
-          if actionUpper == "SPECIAL" and #AI.AvailableMoves == 0 then
-              return true
-          end
-          
-          -- Mask BLOCK if already blocking
-          if actionUpper == "BLOCK" and AI.State.isBlocking then
-              return true
-          end
-          
-          return false -- Action is valid
-      end
-
-      -- Cache possible actions check for ultra-fast performance with action masking
+      -- Cache possible actions check for ultra-fast performance
       local possibleActions = {}
       local inCombo = now < AI.State.comboStateEndTime
-      
-      -- Apply action masking to all actions
-      possibleActions.ATTACK = not isActionMasked("ATTACK")
-      possibleActions.SPECIAL = not isActionMasked("SPECIAL")
-      possibleActions.EVADE = not isActionMasked("EVADE")
-      possibleActions.FEINT = not isActionMasked("FEINT")
-      possibleActions.DASH = not isActionMasked("DASH")
-      possibleActions.BLOCK = not isActionMasked("BLOCK")
-      possibleActions.REPOSITION = true -- REPOSITION is always available
+      possibleActions.ATTACK = (now - AI.State.lastActionTimes.ATTACK > CONST.ATTACK_COOLDOWN) and state.inRange
+      possibleActions.SPECIAL = (now - AI.State.lastActionTimes.SPECIAL > CONST.SPECIAL_MOVE_COOLDOWN) and (state.energy >= CONST.COSTS.SPECIAL) and state.inRange and (#AI.AvailableMoves > 0)
+      possibleActions.EVADE = (now - AI.State.lastActionTimes.EVADE > CONST.DASH_COOLDOWN) and (state.energy >= CONST.COSTS.DASH)
+      possibleActions.FEINT = (now - AI.State.lastActionTimes.FEINT > CONST.FEINT_COOLDOWN) and (state.energy >= CONST.COSTS.FEINT) and state.inRange
+      possibleActions.DASH = (now - AI.State.lastActionTimes.DASH > CONST.DASH_COOLDOWN) and (state.energy >= CONST.COSTS.DASH)
+      possibleActions.BLOCK = (now - AI.State.lastActionTimes.BLOCK > CONST.BLOCK_COOLDOWN) and (state.energy >= CONST.COSTS.BLOCK) and not AI.State.isBlocking
+      possibleActions.REPOSITION = true
 
       -- ExploitSeeker uses pure random exploration
       if tactic == "ExploitSeeker" then
@@ -4697,26 +4571,6 @@ local function initializeCombatSystem(character)
               end
               if (tactic == "BaitAndPunish" or tactic == "Defensive") and action == "EVADE" then 
                   modifier *= 1.7 -- Increased for defensive tactics
-              end
-              
-              -- ENEMY COOLDOWN ESTIMATION (#14): Be more aggressive when enemy abilities are on cooldown
-              if action == "ATTACK" or action == "SPECIAL" then
-                  -- Increase aggression when enemy can't retaliate effectively
-                  if not state.enemyAttackReady and not state.enemySpecialReady then
-                      modifier *= 1.4 -- Strong bonus when enemy has no offensive options
-                      if CONST.DEBUG_MODE then
-                          print(`⚡ Enemy abilities on cooldown! Boosting ${action}`)
-                      end
-                  elseif not state.enemyAttackReady then
-                      modifier *= 1.2 -- Moderate bonus when enemy can't attack
-                  end
-              end
-              
-              if action == "EVADE" then
-                  -- Be more cautious when enemy abilities are ready
-                  if state.enemyAttackReady or state.enemySpecialReady then
-                      modifier *= 1.3 -- Increase dodge priority when enemy can attack
-                  end
               end
               
               -- DASH action modifiers - aggressive repositioning and tech usage
@@ -4966,35 +4820,9 @@ local function initializeCombatSystem(character)
       if #actionScores == 0 then return "REPOSITION" end
 
       -- Apply exploration strategy
-      -- SAFE EXPLORATION (#5): HP-based exploration strategy
-      -- Only allow exploration when HP > 50%, force exploitation when HP < 30%
-      local canExplore = true
-      local originalEpsilon = AI.State.epsilon
-      local epsilonModified = false
-      
-      if CONST.SAFE_EXPLORATION_ENABLED then
-          if state.myHealthPercent < CONST.SAFE_EXPLORATION_LOW_HP_THRESHOLD then
-              -- Low HP (<30%): Force exploitation (use best known action)
-              canExplore = false
-              if CONST.DEBUG_MODE then
-                  print("⚠️ Low HP: Forcing EXPLOITATION (no random actions)")
-              end
-          elseif state.myHealthPercent < CONST.SAFE_EXPLORATION_HIGH_HP_THRESHOLD then
-              -- Medium HP (30-50%): Reduce exploration by 70%
-              AI.State.epsilon = originalEpsilon * 0.3
-              epsilonModified = true
-              if CONST.DEBUG_MODE then
-                  print(string.format("⚠️ Medium HP: Reducing exploration from %.2f to %.2f", originalEpsilon, AI.State.epsilon))
-              end
-          end
-          -- High HP (>50%): Normal exploration (epsilon unchanged)
-      end
-      
-      -- Exploration decision with safe exploration
-      local selectedAction = nil
-      if canExplore and explorationMode == "epsilon-greedy" and math.random() < AI.State.epsilon then
+      if explorationMode == "epsilon-greedy" and math.random() < AI.State.epsilon then
           -- Epsilon-greedy: Random action
-          selectedAction = actionScores[math.random(#actionScores)].action
+          return actionScores[math.random(#actionScores)].action
       elseif explorationMode == "policy-gradient" or explorationMode == "aggressive-policy" then
           -- Policy gradient: Sample from policy network distribution
           local rand = math.random()
@@ -5053,18 +4881,7 @@ local function initializeCombatSystem(character)
 
       -- Sort by score (highest first) and return best
       table.sort(actionScores, function(a, b) return a.score > b.score end)
-      
-      -- Restore original epsilon if it was modified
-      if epsilonModified then
-          AI.State.epsilon = originalEpsilon
-      end
-      
-      -- Return selected action or best action
-      if selectedAction then
-          return selectedAction
-      else
-          return actionScores[1].action
-      end
+      return actionScores[1].action
   end
 
   --// --- ACTION MODULE ---
@@ -5128,37 +4945,12 @@ local function initializeCombatSystem(character)
           AI.State.lastActionTimes.EVADE = now
           AI.State.isPerfectDodging, AI.State.dodgeStartTime = true, now
       elseif action == "DASH" then
-          -- ML-based smart dash direction selection with wall awareness (#7)
+          -- ML-based smart dash direction selection
           local dashDirection, dashScores
           
           -- Use ML prediction if we have enough learning data
           if AI.ActionStats.totalTrials > 100 then
               dashDirection, dashScores = AI.DeepLearning.PredictBestDashDirection(state, targetPos, rootPart)
-              
-              -- WALL AWARENESS (#7): Override ML decision if it would dash into a wall
-              if state.wallRaycasts and #state.wallRaycasts > 0 then
-                  local directionToCheck = nil
-                  if dashDirection == Enum.KeyCode.W then
-                      directionToCheck = CONST.RAYCAST_DIR_FORWARD
-                  elseif dashDirection == Enum.KeyCode.S then
-                      directionToCheck = CONST.RAYCAST_DIR_BACKWARD
-                  elseif dashDirection == Enum.KeyCode.A then
-                      directionToCheck = CONST.RAYCAST_DIR_LEFT
-                  elseif dashDirection == Enum.KeyCode.D then
-                      directionToCheck = CONST.RAYCAST_DIR_RIGHT
-                  end
-                  
-                  -- Check if there's a wall in that direction
-                  if directionToCheck and state.wallRaycasts[directionToCheck] and 
-                     state.wallRaycasts[directionToCheck].hit and 
-                     state.wallRaycasts[directionToCheck].distance < 10 then
-                      -- Wall too close, choose sideways dash instead
-                      dashDirection = math.random() > 0.5 and Enum.KeyCode.A or Enum.KeyCode.D
-                      if CONST.DEBUG_MODE then
-                          print("⚠️ Wall detected! Overriding dash to sideways")
-                      end
-                  end
-              end
               
               if CONST.DEBUG_MODE then
                   print("ML Dash: Direction=" .. tostring(dashDirection) .. " Scores: W=" .. 
@@ -5166,24 +4958,13 @@ local function initializeCombatSystem(character)
                       " A=" .. string.format("%.2f", dashScores.A) .. " D=" .. string.format("%.2f", dashScores.D))
               end
           else
-              -- Fallback to rule-based system during early learning with wall awareness (#7)
+              -- Fallback to rule-based system during early learning
               local currentDist = (rootPart.Position - targetPos).Magnitude
               
               -- Choose dash direction based on tactic and distance
               if AI.State.currentTactic == "Defensive" or state.myHealthPercent < 0.3 then
-                  -- WALL AWARENESS (#7): Don't backdash if cornered, use side dash instead
-                  if state.isCornered or (state.wallRaycasts and state.wallRaycasts[CONST.RAYCAST_DIR_BACKWARD] and 
-                     state.wallRaycasts[CONST.RAYCAST_DIR_BACKWARD].hit and 
-                     state.wallRaycasts[CONST.RAYCAST_DIR_BACKWARD].distance < 10) then
-                      -- Cornered or wall behind: dash sideways instead
-                      dashDirection = math.random() > 0.5 and Enum.KeyCode.A or Enum.KeyCode.D
-                      if CONST.DEBUG_MODE then
-                          print("⚠️ Cornered! Using side dash instead of backdash")
-                      end
-                  else
-                      -- Backdash when defensive or low health (and not cornered)
-                      dashDirection = Enum.KeyCode.S
-                  end
+                  -- Backdash when defensive or low health
+                  dashDirection = Enum.KeyCode.S
               elseif AI.State.currentTactic == "Aggressive" or AI.State.currentTactic == "Finisher" then
                   -- Forward dash when aggressive
                   dashDirection = Enum.KeyCode.W
@@ -5191,16 +4972,8 @@ local function initializeCombatSystem(character)
                   -- Forward dash to close distance
                   dashDirection = Enum.KeyCode.W
               elseif currentDist < CONST.ATTACK_RANGE * 0.5 then
-                  -- WALL AWARENESS (#7): Check for wall behind before backdashing
-                  if state.wallRaycasts and state.wallRaycasts[CONST.RAYCAST_DIR_BACKWARD] and 
-                     state.wallRaycasts[CONST.RAYCAST_DIR_BACKWARD].hit and 
-                     state.wallRaycasts[CONST.RAYCAST_DIR_BACKWARD].distance < 10 then
-                      -- Wall behind: dash sideways instead
-                      dashDirection = math.random() > 0.5 and Enum.KeyCode.A or Enum.KeyCode.D
-                  else
-                      -- Backdash to create space when too close (and no wall behind)
-                      dashDirection = Enum.KeyCode.S
-                  end
+                  -- Backdash to create space when too close
+                  dashDirection = Enum.KeyCode.S
               else
                   -- Side dash for repositioning (randomly left or right)
                   dashDirection = math.random() > 0.5 and Enum.KeyCode.A or Enum.KeyCode.D
@@ -5859,178 +5632,11 @@ local function initializeCombatSystem(character)
       end
   end
 
-  -- RAYCAST/MAP AWARENESS (#7): Wall detection and corner awareness
-  local function UpdateRaycasts()
-      local now = os.clock()
-      
-      -- Use performance-aware interval
-      local raycastInterval = CONST.RAYCAST_UPDATE_INTERVAL
-      if AI.State.performanceConfig and AI.State.performanceConfig.raycastInterval then
-          raycastInterval = AI.State.performanceConfig.raycastInterval
-      end
-      
-      -- Throttle raycast updates for performance
-      if now - AI.State.lastRaycastUpdate < raycastInterval then
-          return
-      end
-      AI.State.lastRaycastUpdate = now
-      
-      -- Safety check: ensure rootPart and character exist
-      if not rootPart or not rootPart.Parent or not character then
-          return
-      end
-      
-      -- Cast rays in 8 directions around the character
-      local raycastParams = RaycastParams.new()
-      raycastParams.FilterDescendantsInstances = {character}
-      raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
-      
-      local directions = {
-          Vector3.new(1, 0, 0),     -- Right
-          Vector3.new(-1, 0, 0),    -- Left
-          Vector3.new(0, 0, 1),     -- Forward
-          Vector3.new(0, 0, -1),    -- Backward
-          Vector3.new(0.707, 0, 0.707),   -- Forward-Right
-          Vector3.new(-0.707, 0, 0.707),  -- Forward-Left
-          Vector3.new(0.707, 0, -0.707),  -- Backward-Right
-          Vector3.new(-0.707, 0, -0.707), -- Backward-Left
-      }
-      
-      AI.State.wallRaycasts = {}
-      local wallHitCount = 0
-      
-      for i, direction in ipairs(directions) do
-          local rayOrigin = rootPart.Position
-          local rayDirection = direction * CONST.RAYCAST_DISTANCE
-          
-          local rayResult = Workspace:Raycast(rayOrigin, rayDirection, raycastParams)
-          
-          local hitWall = rayResult ~= nil
-          AI.State.wallRaycasts[i] = {
-              direction = direction,
-              hit = hitWall,
-              distance = hitWall and rayResult.Distance or CONST.RAYCAST_DISTANCE,
-              position = hitWall and rayResult.Position or (rayOrigin + rayDirection),
-          }
-          
-          if hitWall then
-              wallHitCount = wallHitCount + 1
-          end
-      end
-      
-      -- Determine if we're cornered (many walls around us)
-      AI.State.isCornered = wallHitCount >= CONST.CORNERED_WALL_THRESHOLD
-      
-      if CONST.DEBUG_MODE and AI.State.isCornered then
-          print(`⚠️ CORNERED! {wallHitCount} walls detected`)
-      end
-  end
-  
-  -- PING/LATENCY ADAPTIVE INPUT (#8): Network latency compensation
-  local function UpdatePing()
-      local now = os.clock()
-      
-      -- Throttle ping updates
-      if now - AI.State.lastPingUpdate < CONST.PING_UPDATE_INTERVAL then
-          return
-      end
-      AI.State.lastPingUpdate = now
-      
-      -- Get current network ping (in seconds)
-      AI.State.currentPing = player:GetNetworkPing()
-      
-      if CONST.DEBUG_MODE and AI.State.currentPing > 0.2 then
-          print(`⚠️ High ping detected: {string.format("%.0f", AI.State.currentPing * 1000)}ms`)
-      end
-  end
-  
-  -- ENEMY COOLDOWN ESTIMATION (#14): Track and estimate enemy ability cooldowns
-  local function UpdateEnemyCooldowns(deltaTime)
-      -- Update cooldown estimates based on time passed
-      for ability, lastTime in pairs(AI.State.enemyLastActionTimes) do
-          local now = os.clock()
-          local timeSinceUse = now - lastTime
-          local estimatedCooldown = CONST.ENEMY_COOLDOWNS[ability] or 1.0
-          
-          -- Calculate readiness (0 = on cooldown, 1 = ready)
-          AI.State.enemyCooldowns[ability] = math.min(1.0, timeSinceUse / estimatedCooldown)
-      end
-  end
-  
-  -- PERFORMANCE PROFILER (#20): Monitor FPS and simplify calculations if needed
-  local function UpdatePerformanceProfiler(deltaTime)
-      if not CONST.PERFORMANCE_PROFILER_ENABLED then return end
-      
-      local now = os.clock()
-      
-      -- Track frame times
-      table.insert(AI.State.recentFrameTimes, deltaTime)
-      if #AI.State.recentFrameTimes > 30 then
-          table.remove(AI.State.recentFrameTimes, 1)
-      end
-      
-      -- Check performance periodically
-      if now - AI.State.lastPerformanceCheck < CONST.PERFORMANCE_CHECK_INTERVAL then
-          return
-      end
-      AI.State.lastPerformanceCheck = now
-      
-      -- Calculate average FPS from recent frame times
-      if #AI.State.recentFrameTimes >= 10 then
-          local totalTime = 0
-          for _, frameTime in ipairs(AI.State.recentFrameTimes) do
-              totalTime = totalTime + frameTime
-          end
-          local avgFrameTime = totalTime / #AI.State.recentFrameTimes
-          local currentFPS = 1 / avgFrameTime
-          
-          -- Check if we need to simplify calculations
-          local shouldSimplify = currentFPS < CONST.PERFORMANCE_LOW_FPS_THRESHOLD
-          
-          if shouldSimplify and not AI.State.performanceSimplified then
-              AI.State.performanceSimplified = true
-              -- Store original values if not already stored
-              if not AI.State.originalUpdateIntervals then
-                  AI.State.originalUpdateIntervals = {
-                      raycast = CONST.RAYCAST_UPDATE_INTERVAL,
-                      targetScan = CONST.TARGET_SCAN_INTERVAL,
-                  }
-              end
-              -- Use local performance config instead of modifying CONST
-              AI.State.performanceConfig = {
-                  raycastInterval = 0.5,
-                  targetScanInterval = 0.5,
-              }
-              print(string.format("⚠️ Low FPS detected (%.1f). Simplifying calculations.", currentFPS))
-          elseif not shouldSimplify and AI.State.performanceSimplified then
-              AI.State.performanceSimplified = false
-              -- Restore original values
-              if AI.State.originalUpdateIntervals then
-                  AI.State.performanceConfig = {
-                      raycastInterval = AI.State.originalUpdateIntervals.raycast,
-                      targetScanInterval = AI.State.originalUpdateIntervals.targetScan,
-                  }
-              end
-              print(string.format("✅ FPS recovered (%.1f). Restoring full calculations.", currentFPS))
-          end
-          
-          if CONST.DEBUG_MODE then
-              print(string.format("FPS: %.1f (Simplified: %s)", currentFPS, tostring(AI.State.performanceSimplified)))
-          end
-      end
-  end
-
   local function UpdateAIState(deltaTime)
       local now = os.clock()
       AI.State.currentEnergy = math.min(CONST.MAX_ENERGY, AI.State.currentEnergy + CONST.ENERGY_REGEN_RATE * deltaTime)
 
-      -- Use performance-aware interval
-      local targetScanInterval = CONST.TARGET_SCAN_INTERVAL
-      if AI.State.performanceConfig and AI.State.performanceConfig.targetScanInterval then
-          targetScanInterval = AI.State.performanceConfig.targetScanInterval
-      end
-
-      if now - AI.State.lastTargetScanTime > targetScanInterval then
+      if now - AI.State.lastTargetScanTime > CONST.TARGET_SCAN_INTERVAL then
           EvaluateAndSetTarget()
           AI.State.lastTargetScanTime = now
       end
@@ -6049,9 +5655,6 @@ local function initializeCombatSystem(character)
               AI.State.opponentActionTime = now
               -- Track behavior change for volatility
               AI.Learning.UpdateVolatility(0.3) -- Attack = moderate change
-              -- ENEMY COOLDOWN ESTIMATION (#14): Track enemy action usage
-              AI.State.enemyLastActionTimes.ATTACK = now
-              AI.State.enemyCooldowns.ATTACK = 0 -- Reset to on cooldown
           elseif AI.State.targetTorso then
               local velocity = AI.State.targetTorso.AssemblyLinearVelocity
               local targetVelocity = velocity and velocity.Magnitude or 0
@@ -6063,9 +5666,6 @@ local function initializeCombatSystem(character)
                   AI.State.opponentActionTime = now
                   -- Track behavior change for volatility
                   AI.Learning.UpdateVolatility(0.6) -- Evade = high change
-                  -- ENEMY COOLDOWN ESTIMATION (#14): Track enemy dash usage
-                  AI.State.enemyLastActionTimes.DASH = now
-                  AI.State.enemyCooldowns.DASH = 0 -- Reset to on cooldown
               end
           end
       else
@@ -6073,18 +5673,6 @@ local function initializeCombatSystem(character)
       end
 
       RunGlitchScanner() -- Run the scanner every state update.
-      
-      -- Update raycast/map awareness (#7)
-      UpdateRaycasts()
-      
-      -- Update ping/latency (#8)
-      UpdatePing()
-      
-      -- Update enemy cooldown estimation (#14)
-      UpdateEnemyCooldowns(deltaTime)
-      
-      -- Update performance profiler (#20)
-      UpdatePerformanceProfiler(deltaTime)
       
       -- Periodically save character model (every 100 trials)
       if AI.ActionStats.totalTrials > 0 and AI.ActionStats.totalTrials % 100 == 0 then
@@ -6398,8 +5986,7 @@ local function initializeCombatSystem(character)
           (now - AI.State.lastPredictionTime) > 0.055 or 
           targetMoved
       if shouldRecalcPrediction then
-          -- PING/LATENCY ADAPTIVE INPUT (#8): Use tracked ping for adaptive prediction
-          local ping = AI.State.currentPing or player:GetNetworkPing()
+          local ping = player:GetNetworkPing()
           local velocity = AI.State.targetTorso.AssemblyLinearVelocity
           
           -- Safety check for velocity
@@ -6409,9 +5996,8 @@ local function initializeCombatSystem(character)
           
           local velocityMag = velocity.Magnitude
           
-          -- Adaptive prediction time based on velocity and ping (#8)
-          -- High ping (200ms) needs more lead time than low ping (50ms)
-          local basePrediction = CONST.BASE_PREDICTION_TIME + ping * CONST.PING_PREDICTION_MULTIPLIER
+          -- Adaptive prediction time based on velocity and ping
+          local basePrediction = CONST.BASE_PREDICTION_TIME + ping * 0.35
           
           -- Improved velocity-based prediction with smoother gradient scaling
           local velocityFactor = 1.0
@@ -6470,16 +6056,6 @@ local function initializeCombatSystem(character)
           energy = AI.State.currentEnergy,
           inRange = distance <= CONST.ATTACK_RANGE,
           isTargetAttacking = AI.State.isTargetAttacking,
-          -- Raycast/Map Awareness (#7)
-          isCornered = AI.State.isCornered,
-          wallRaycasts = AI.State.wallRaycasts,
-          -- Ping/Latency (#8)
-          currentPing = AI.State.currentPing,
-          -- Enemy Cooldown Estimation (#14)
-          enemyCooldowns = AI.State.enemyCooldowns,
-          enemyAttackReady = AI.State.enemyCooldowns.ATTACK > CONST.ENEMY_ABILITY_READY_THRESHOLD,
-          enemySpecialReady = AI.State.enemyCooldowns.SPECIAL > CONST.ENEMY_ABILITY_READY_THRESHOLD,
-          enemyDashReady = AI.State.enemyCooldowns.DASH > CONST.ENEMY_ABILITY_READY_THRESHOLD,
       }
       
       -- Check target ragdoll/stunned state (for ultimate timing)
