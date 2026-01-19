@@ -2180,6 +2180,14 @@ local function initializeCombatSystem(character)
       TARGET_RAGDOLL_CHECK_INTERVAL = 0.2, -- How often to check target ragdoll state
       AWAKEN_ENERGY_COST = 0, -- Energy cost to awaken (usually free)
       ULTIMATE_ENERGY_COST = 50, -- Energy cost for ultimate
+      -- Raycast/Map Awareness (#7)
+      RAYCAST_DISTANCE = 30, -- Distance to check for walls (studs)
+      RAYCAST_UPDATE_INTERVAL = 0.2, -- How often to update raycasts (seconds)
+      RAYCAST_DIRECTIONS = 8, -- Number of raycasts around character
+      CORNERED_WALL_THRESHOLD = 5, -- Number of wall hits to consider cornered
+      -- Ping/Latency Adaptation (#8)
+      PING_UPDATE_INTERVAL = 1.0, -- How often to update ping (seconds)
+      PING_PREDICTION_MULTIPLIER = 0.35, -- Base multiplier for ping-based prediction
   }
 
   --// --- STATE MANAGEMENT ---
@@ -2228,6 +2236,13 @@ local function initializeCombatSystem(character)
           lastComboTime = 0,
           consecutiveHits = 0,
           lastDamageDealtTime = 0,
+          -- Raycast/Map Awareness (#7)
+          wallRaycasts = {}, -- Store raycast results for 8 directions
+          isCornered = false, -- True if surrounded by walls
+          lastRaycastUpdate = 0, -- Last time raycasts were updated
+          -- Ping/Latency Adaptation (#8)
+          currentPing = 0, -- Network ping in seconds
+          lastPingUpdate = 0,
           -- ML-enhanced dash tracking
           lastDashDirection = nil,
           lastDashScore = 0,
@@ -4424,16 +4439,77 @@ local function initializeCombatSystem(character)
           end
       end
 
-      -- Cache possible actions check for ultra-fast performance
+      -- ACTION MASKING (#3): Invalid Action Prevention Layer
+      -- This prevents the AI from wasting time trying impossible actions
+      local function isActionMasked(action)
+          -- Mask attacking actions if stunned/ragdolled
+          if humanoid then
+              local humanoidState = humanoid:GetState()
+              if humanoidState == Enum.HumanoidStateType.Ragdoll or 
+                 humanoidState == Enum.HumanoidStateType.FallingDown or
+                 humanoidState == Enum.HumanoidStateType.Flying then
+                  if action == "ATTACK" or action == "SPECIAL" or action == "BLOCK" then
+                      return true -- Cannot attack/block while stunned
+                  end
+              end
+          end
+          
+          -- Mask actions on cooldown (hard constraint)
+          if action == "ATTACK" and (now - AI.State.lastActionTimes.ATTACK <= CONST.ATTACK_COOLDOWN) then
+              return true
+          end
+          if action == "SPECIAL" and (now - AI.State.lastActionTimes.SPECIAL <= CONST.SPECIAL_MOVE_COOLDOWN) then
+              return true
+          end
+          if action == "EVADE" and (now - AI.State.lastActionTimes.EVADE <= CONST.DASH_COOLDOWN) then
+              return true
+          end
+          if action == "DASH" and (now - AI.State.lastActionTimes.DASH <= CONST.DASH_COOLDOWN) then
+              return true
+          end
+          if action == "FEINT" and (now - AI.State.lastActionTimes.FEINT <= CONST.FEINT_COOLDOWN) then
+              return true
+          end
+          if action == "BLOCK" and (now - AI.State.lastActionTimes.BLOCK <= CONST.BLOCK_COOLDOWN) then
+              return true
+          end
+          
+          -- Mask actions without enough energy (hard constraint)
+          local energyCost = CONST.COSTS[action] or 0
+          if state.energy < energyCost then
+              return true
+          end
+          
+          -- Mask range-dependent actions
+          if (action == "ATTACK" or action == "SPECIAL" or action == "FEINT") and not state.inRange then
+              return true
+          end
+          
+          -- Mask SPECIAL if no moves available
+          if action == "SPECIAL" and #AI.AvailableMoves == 0 then
+              return true
+          end
+          
+          -- Mask BLOCK if already blocking
+          if action == "BLOCK" and AI.State.isBlocking then
+              return true
+          end
+          
+          return false -- Action is valid
+      end
+
+      -- Cache possible actions check for ultra-fast performance with action masking
       local possibleActions = {}
       local inCombo = now < AI.State.comboStateEndTime
-      possibleActions.ATTACK = (now - AI.State.lastActionTimes.ATTACK > CONST.ATTACK_COOLDOWN) and state.inRange
-      possibleActions.SPECIAL = (now - AI.State.lastActionTimes.SPECIAL > CONST.SPECIAL_MOVE_COOLDOWN) and (state.energy >= CONST.COSTS.SPECIAL) and state.inRange and (#AI.AvailableMoves > 0)
-      possibleActions.EVADE = (now - AI.State.lastActionTimes.EVADE > CONST.DASH_COOLDOWN) and (state.energy >= CONST.COSTS.DASH)
-      possibleActions.FEINT = (now - AI.State.lastActionTimes.FEINT > CONST.FEINT_COOLDOWN) and (state.energy >= CONST.COSTS.FEINT) and state.inRange
-      possibleActions.DASH = (now - AI.State.lastActionTimes.DASH > CONST.DASH_COOLDOWN) and (state.energy >= CONST.COSTS.DASH)
-      possibleActions.BLOCK = (now - AI.State.lastActionTimes.BLOCK > CONST.BLOCK_COOLDOWN) and (state.energy >= CONST.COSTS.BLOCK) and not AI.State.isBlocking
-      possibleActions.REPOSITION = true
+      
+      -- Apply action masking to all actions
+      possibleActions.ATTACK = not isActionMasked("ATTACK")
+      possibleActions.SPECIAL = not isActionMasked("SPECIAL")
+      possibleActions.EVADE = not isActionMasked("EVADE")
+      possibleActions.FEINT = not isActionMasked("FEINT")
+      possibleActions.DASH = not isActionMasked("DASH")
+      possibleActions.BLOCK = not isActionMasked("BLOCK")
+      possibleActions.REPOSITION = true -- REPOSITION is always available
 
       -- ExploitSeeker uses pure random exploration
       if tactic == "ExploitSeeker" then
@@ -4945,12 +5021,37 @@ local function initializeCombatSystem(character)
           AI.State.lastActionTimes.EVADE = now
           AI.State.isPerfectDodging, AI.State.dodgeStartTime = true, now
       elseif action == "DASH" then
-          -- ML-based smart dash direction selection
+          -- ML-based smart dash direction selection with wall awareness (#7)
           local dashDirection, dashScores
           
           -- Use ML prediction if we have enough learning data
           if AI.ActionStats.totalTrials > 100 then
               dashDirection, dashScores = AI.DeepLearning.PredictBestDashDirection(state, targetPos, rootPart)
+              
+              -- WALL AWARENESS (#7): Override ML decision if it would dash into a wall
+              if state.wallRaycasts and #state.wallRaycasts > 0 then
+                  local directionToCheck = nil
+                  if dashDirection == Enum.KeyCode.W then
+                      directionToCheck = 3 -- Forward
+                  elseif dashDirection == Enum.KeyCode.S then
+                      directionToCheck = 4 -- Backward
+                  elseif dashDirection == Enum.KeyCode.A then
+                      directionToCheck = 2 -- Left
+                  elseif dashDirection == Enum.KeyCode.D then
+                      directionToCheck = 1 -- Right
+                  end
+                  
+                  -- Check if there's a wall in that direction
+                  if directionToCheck and state.wallRaycasts[directionToCheck] and 
+                     state.wallRaycasts[directionToCheck].hit and 
+                     state.wallRaycasts[directionToCheck].distance < 10 then
+                      -- Wall too close, choose sideways dash instead
+                      dashDirection = math.random() > 0.5 and Enum.KeyCode.A or Enum.KeyCode.D
+                      if CONST.DEBUG_MODE then
+                          print("⚠️ Wall detected! Overriding dash to sideways")
+                      end
+                  end
+              end
               
               if CONST.DEBUG_MODE then
                   print("ML Dash: Direction=" .. tostring(dashDirection) .. " Scores: W=" .. 
@@ -4958,13 +5059,23 @@ local function initializeCombatSystem(character)
                       " A=" .. string.format("%.2f", dashScores.A) .. " D=" .. string.format("%.2f", dashScores.D))
               end
           else
-              -- Fallback to rule-based system during early learning
+              -- Fallback to rule-based system during early learning with wall awareness (#7)
               local currentDist = (rootPart.Position - targetPos).Magnitude
               
               -- Choose dash direction based on tactic and distance
               if AI.State.currentTactic == "Defensive" or state.myHealthPercent < 0.3 then
-                  -- Backdash when defensive or low health
-                  dashDirection = Enum.KeyCode.S
+                  -- WALL AWARENESS (#7): Don't backdash if cornered, use side dash instead
+                  if state.isCornered or (state.wallRaycasts and state.wallRaycasts[4] and 
+                     state.wallRaycasts[4].hit and state.wallRaycasts[4].distance < 10) then
+                      -- Cornered or wall behind: dash sideways instead
+                      dashDirection = math.random() > 0.5 and Enum.KeyCode.A or Enum.KeyCode.D
+                      if CONST.DEBUG_MODE then
+                          print("⚠️ Cornered! Using side dash instead of backdash")
+                      end
+                  else
+                      -- Backdash when defensive or low health (and not cornered)
+                      dashDirection = Enum.KeyCode.S
+                  end
               elseif AI.State.currentTactic == "Aggressive" or AI.State.currentTactic == "Finisher" then
                   -- Forward dash when aggressive
                   dashDirection = Enum.KeyCode.W
@@ -4972,8 +5083,15 @@ local function initializeCombatSystem(character)
                   -- Forward dash to close distance
                   dashDirection = Enum.KeyCode.W
               elseif currentDist < CONST.ATTACK_RANGE * 0.5 then
-                  -- Backdash to create space when too close
-                  dashDirection = Enum.KeyCode.S
+                  -- WALL AWARENESS (#7): Check for wall behind before backdashing
+                  if state.wallRaycasts and state.wallRaycasts[4] and 
+                     state.wallRaycasts[4].hit and state.wallRaycasts[4].distance < 10 then
+                      -- Wall behind: dash sideways instead
+                      dashDirection = math.random() > 0.5 and Enum.KeyCode.A or Enum.KeyCode.D
+                  else
+                      -- Backdash to create space when too close (and no wall behind)
+                      dashDirection = Enum.KeyCode.S
+                  end
               else
                   -- Side dash for repositioning (randomly left or right)
                   dashDirection = math.random() > 0.5 and Enum.KeyCode.A or Enum.KeyCode.D
@@ -5632,6 +5750,80 @@ local function initializeCombatSystem(character)
       end
   end
 
+  -- RAYCAST/MAP AWARENESS (#7): Wall detection and corner awareness
+  local function UpdateRaycasts()
+      local now = os.clock()
+      
+      -- Throttle raycast updates for performance
+      if now - AI.State.lastRaycastUpdate < CONST.RAYCAST_UPDATE_INTERVAL then
+          return
+      end
+      AI.State.lastRaycastUpdate = now
+      
+      -- Cast rays in 8 directions around the character
+      local raycastParams = RaycastParams.new()
+      raycastParams.FilterDescendantsInstances = {character}
+      raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+      
+      local directions = {
+          Vector3.new(1, 0, 0),     -- Right
+          Vector3.new(-1, 0, 0),    -- Left
+          Vector3.new(0, 0, 1),     -- Forward
+          Vector3.new(0, 0, -1),    -- Backward
+          Vector3.new(0.707, 0, 0.707),   -- Forward-Right
+          Vector3.new(-0.707, 0, 0.707),  -- Forward-Left
+          Vector3.new(0.707, 0, -0.707),  -- Backward-Right
+          Vector3.new(-0.707, 0, -0.707), -- Backward-Left
+      }
+      
+      AI.State.wallRaycasts = {}
+      local wallHitCount = 0
+      
+      for i, direction in ipairs(directions) do
+          local rayOrigin = rootPart.Position
+          local rayDirection = direction * CONST.RAYCAST_DISTANCE
+          
+          local rayResult = Workspace:Raycast(rayOrigin, rayDirection, raycastParams)
+          
+          local hitWall = rayResult ~= nil
+          AI.State.wallRaycasts[i] = {
+              direction = direction,
+              hit = hitWall,
+              distance = hitWall and rayResult.Distance or CONST.RAYCAST_DISTANCE,
+              position = hitWall and rayResult.Position or (rayOrigin + rayDirection),
+          }
+          
+          if hitWall then
+              wallHitCount = wallHitCount + 1
+          end
+      end
+      
+      -- Determine if we're cornered (many walls around us)
+      AI.State.isCornered = wallHitCount >= CONST.CORNERED_WALL_THRESHOLD
+      
+      if CONST.DEBUG_MODE and AI.State.isCornered then
+          print(`⚠️ CORNERED! {wallHitCount} walls detected`)
+      end
+  end
+  
+  -- PING/LATENCY ADAPTIVE INPUT (#8): Network latency compensation
+  local function UpdatePing()
+      local now = os.clock()
+      
+      -- Throttle ping updates
+      if now - AI.State.lastPingUpdate < CONST.PING_UPDATE_INTERVAL then
+          return
+      end
+      AI.State.lastPingUpdate = now
+      
+      -- Get current network ping (in seconds)
+      AI.State.currentPing = player:GetNetworkPing()
+      
+      if CONST.DEBUG_MODE and AI.State.currentPing > 0.2 then
+          print(`⚠️ High ping detected: {string.format("%.0f", AI.State.currentPing * 1000)}ms`)
+      end
+  end
+
   local function UpdateAIState(deltaTime)
       local now = os.clock()
       AI.State.currentEnergy = math.min(CONST.MAX_ENERGY, AI.State.currentEnergy + CONST.ENERGY_REGEN_RATE * deltaTime)
@@ -5673,6 +5865,12 @@ local function initializeCombatSystem(character)
       end
 
       RunGlitchScanner() -- Run the scanner every state update.
+      
+      -- Update raycast/map awareness (#7)
+      UpdateRaycasts()
+      
+      -- Update ping/latency (#8)
+      UpdatePing()
       
       -- Periodically save character model (every 100 trials)
       if AI.ActionStats.totalTrials > 0 and AI.ActionStats.totalTrials % 100 == 0 then
@@ -5986,7 +6184,8 @@ local function initializeCombatSystem(character)
           (now - AI.State.lastPredictionTime) > 0.055 or 
           targetMoved
       if shouldRecalcPrediction then
-          local ping = player:GetNetworkPing()
+          -- PING/LATENCY ADAPTIVE INPUT (#8): Use tracked ping for adaptive prediction
+          local ping = AI.State.currentPing or player:GetNetworkPing()
           local velocity = AI.State.targetTorso.AssemblyLinearVelocity
           
           -- Safety check for velocity
@@ -5996,8 +6195,9 @@ local function initializeCombatSystem(character)
           
           local velocityMag = velocity.Magnitude
           
-          -- Adaptive prediction time based on velocity and ping
-          local basePrediction = CONST.BASE_PREDICTION_TIME + ping * 0.35
+          -- Adaptive prediction time based on velocity and ping (#8)
+          -- High ping (200ms) needs more lead time than low ping (50ms)
+          local basePrediction = CONST.BASE_PREDICTION_TIME + ping * CONST.PING_PREDICTION_MULTIPLIER
           
           -- Improved velocity-based prediction with smoother gradient scaling
           local velocityFactor = 1.0
@@ -6056,6 +6256,11 @@ local function initializeCombatSystem(character)
           energy = AI.State.currentEnergy,
           inRange = distance <= CONST.ATTACK_RANGE,
           isTargetAttacking = AI.State.isTargetAttacking,
+          -- Raycast/Map Awareness (#7)
+          isCornered = AI.State.isCornered,
+          wallRaycasts = AI.State.wallRaycasts,
+          -- Ping/Latency (#8)
+          currentPing = AI.State.currentPing,
       }
       
       -- Check target ragdoll/stunned state (for ultimate timing)
