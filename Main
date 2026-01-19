@@ -4489,56 +4489,59 @@ local function initializeCombatSystem(character)
       -- ACTION MASKING (#3): Invalid Action Prevention Layer
       -- This prevents the AI from wasting time trying impossible actions
       local function isActionMasked(action)
+          -- Ensure action is uppercase for consistency
+          local actionUpper = action:upper()
+          
           -- Mask attacking actions if stunned/ragdolled
           if humanoid then
               local humanoidState = humanoid:GetState()
               if humanoidState == Enum.HumanoidStateType.Ragdoll or 
                  humanoidState == Enum.HumanoidStateType.FallingDown or
                  humanoidState == Enum.HumanoidStateType.Flying then
-                  if action == "ATTACK" or action == "SPECIAL" or action == "BLOCK" then
+                  if actionUpper == "ATTACK" or actionUpper == "SPECIAL" or actionUpper == "BLOCK" then
                       return true -- Cannot attack/block while stunned
                   end
               end
           end
           
           -- Mask actions on cooldown (hard constraint)
-          if action == "ATTACK" and (now - AI.State.lastActionTimes.ATTACK <= CONST.ATTACK_COOLDOWN) then
+          if actionUpper == "ATTACK" and (now - AI.State.lastActionTimes.ATTACK <= CONST.ATTACK_COOLDOWN) then
               return true
           end
-          if action == "SPECIAL" and (now - AI.State.lastActionTimes.SPECIAL <= CONST.SPECIAL_MOVE_COOLDOWN) then
+          if actionUpper == "SPECIAL" and (now - AI.State.lastActionTimes.SPECIAL <= CONST.SPECIAL_MOVE_COOLDOWN) then
               return true
           end
-          if action == "EVADE" and (now - AI.State.lastActionTimes.EVADE <= CONST.DASH_COOLDOWN) then
+          if actionUpper == "EVADE" and (now - AI.State.lastActionTimes.EVADE <= CONST.DASH_COOLDOWN) then
               return true
           end
-          if action == "DASH" and (now - AI.State.lastActionTimes.DASH <= CONST.DASH_COOLDOWN) then
+          if actionUpper == "DASH" and (now - AI.State.lastActionTimes.DASH <= CONST.DASH_COOLDOWN) then
               return true
           end
-          if action == "FEINT" and (now - AI.State.lastActionTimes.FEINT <= CONST.FEINT_COOLDOWN) then
+          if actionUpper == "FEINT" and (now - AI.State.lastActionTimes.FEINT <= CONST.FEINT_COOLDOWN) then
               return true
           end
-          if action == "BLOCK" and (now - AI.State.lastActionTimes.BLOCK <= CONST.BLOCK_COOLDOWN) then
+          if actionUpper == "BLOCK" and (now - AI.State.lastActionTimes.BLOCK <= CONST.BLOCK_COOLDOWN) then
               return true
           end
           
           -- Mask actions without enough energy (hard constraint)
-          local energyCost = CONST.COSTS[action] or 0
+          local energyCost = CONST.COSTS[actionUpper] or 0
           if state.energy < energyCost then
               return true
           end
           
           -- Mask range-dependent actions
-          if (action == "ATTACK" or action == "SPECIAL" or action == "FEINT") and not state.inRange then
+          if (actionUpper == "ATTACK" or actionUpper == "SPECIAL" or actionUpper == "FEINT") and not state.inRange then
               return true
           end
           
-          -- Mask SPECIAL if no moves available
-          if action == "SPECIAL" and #AI.AvailableMoves == 0 then
+          -- Mask SPECIAL if no moves available (check AI.AvailableMoves from parent scope)
+          if actionUpper == "SPECIAL" and #AI.AvailableMoves == 0 then
               return true
           end
           
           -- Mask BLOCK if already blocking
-          if action == "BLOCK" and AI.State.isBlocking then
+          if actionUpper == "BLOCK" and AI.State.isBlocking then
               return true
           end
           
@@ -4967,6 +4970,7 @@ local function initializeCombatSystem(character)
       -- Only allow exploration when HP > 50%, force exploitation when HP < 30%
       local canExplore = true
       local originalEpsilon = AI.State.epsilon
+      local epsilonModified = false
       
       if CONST.SAFE_EXPLORATION_ENABLED then
           if state.myHealthPercent < CONST.SAFE_EXPLORATION_LOW_HP_THRESHOLD then
@@ -4978,6 +4982,7 @@ local function initializeCombatSystem(character)
           elseif state.myHealthPercent < CONST.SAFE_EXPLORATION_HIGH_HP_THRESHOLD then
               -- Medium HP (30-50%): Reduce exploration by 70%
               AI.State.epsilon = originalEpsilon * 0.3
+              epsilonModified = true
               if CONST.DEBUG_MODE then
                   print(string.format("⚠️ Medium HP: Reducing exploration from %.2f to %.2f", originalEpsilon, AI.State.epsilon))
               end
@@ -4986,12 +4991,10 @@ local function initializeCombatSystem(character)
       end
       
       -- Exploration decision with safe exploration
+      local selectedAction = nil
       if canExplore and explorationMode == "epsilon-greedy" and math.random() < AI.State.epsilon then
           -- Epsilon-greedy: Random action
-          local result = actionScores[math.random(#actionScores)].action
-          -- Restore original epsilon after decision
-          AI.State.epsilon = originalEpsilon
-          return result
+          selectedAction = actionScores[math.random(#actionScores)].action
       elseif explorationMode == "policy-gradient" or explorationMode == "aggressive-policy" then
           -- Policy gradient: Sample from policy network distribution
           local rand = math.random()
@@ -5050,7 +5053,18 @@ local function initializeCombatSystem(character)
 
       -- Sort by score (highest first) and return best
       table.sort(actionScores, function(a, b) return a.score > b.score end)
-      return actionScores[1].action
+      
+      -- Restore original epsilon if it was modified
+      if epsilonModified then
+          AI.State.epsilon = originalEpsilon
+      end
+      
+      -- Return selected action or best action
+      if selectedAction then
+          return selectedAction
+      else
+          return actionScores[1].action
+      end
   end
 
   --// --- ACTION MODULE ---
@@ -5861,8 +5875,8 @@ local function initializeCombatSystem(character)
       end
       AI.State.lastRaycastUpdate = now
       
-      -- Safety check: ensure rootPart exists
-      if not rootPart or not rootPart.Parent then
+      -- Safety check: ensure rootPart and character exist
+      if not rootPart or not rootPart.Parent or not character then
           return
       end
       
