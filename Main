@@ -2197,6 +2197,10 @@ local function initializeCombatSystem(character)
       ENEMY_SPECIAL_COOLDOWN_ESTIMATE = 1.5, -- Estimated enemy special cooldown
       ENEMY_DASH_COOLDOWN_ESTIMATE = 0.1, -- Estimated enemy dash cooldown
       ENEMY_BLOCK_COOLDOWN_ESTIMATE = 0.8, -- Estimated enemy block cooldown
+      -- Performance Profiler (#20)
+      PERFORMANCE_PROFILER_ENABLED = true, -- Enable performance monitoring
+      PERFORMANCE_LOW_FPS_THRESHOLD = 40, -- FPS below this triggers simplification
+      PERFORMANCE_CHECK_INTERVAL = 5.0, -- Check performance every 5 seconds
   }
 
   --// --- STATE MANAGEMENT ---
@@ -2265,6 +2269,10 @@ local function initializeCombatSystem(character)
               DASH = 0,
               BLOCK = 0,
           },
+          -- Performance Profiler (#20)
+          lastPerformanceCheck = 0,
+          performanceSimplified = false, -- True if calculations are simplified due to low FPS
+          recentFrameTimes = {}, -- Track last 30 frame times for FPS calculation
           -- ML-enhanced dash tracking
           lastDashDirection = nil,
           lastDashScore = 0,
@@ -5903,6 +5911,56 @@ local function initializeCombatSystem(character)
           AI.State.enemyCooldowns[ability] = math.min(1.0, timeSinceUse / estimatedCooldown)
       end
   end
+  
+  -- PERFORMANCE PROFILER (#20): Monitor FPS and simplify calculations if needed
+  local function UpdatePerformanceProfiler(deltaTime)
+      if not CONST.PERFORMANCE_PROFILER_ENABLED then return end
+      
+      local now = os.clock()
+      
+      -- Track frame times
+      table.insert(AI.State.recentFrameTimes, deltaTime)
+      if #AI.State.recentFrameTimes > 30 then
+          table.remove(AI.State.recentFrameTimes, 1)
+      end
+      
+      -- Check performance periodically
+      if now - AI.State.lastPerformanceCheck < CONST.PERFORMANCE_CHECK_INTERVAL then
+          return
+      end
+      AI.State.lastPerformanceCheck = now
+      
+      -- Calculate average FPS from recent frame times
+      if #AI.State.recentFrameTimes >= 10 then
+          local totalTime = 0
+          for _, frameTime in ipairs(AI.State.recentFrameTimes) do
+              totalTime = totalTime + frameTime
+          end
+          local avgFrameTime = totalTime / #AI.State.recentFrameTimes
+          local currentFPS = 1 / avgFrameTime
+          
+          -- Check if we need to simplify calculations
+          local shouldSimplify = currentFPS < CONST.PERFORMANCE_LOW_FPS_THRESHOLD
+          
+          if shouldSimplify and not AI.State.performanceSimplified then
+              AI.State.performanceSimplified = true
+              -- Reduce update frequencies
+              CONST.RAYCAST_UPDATE_INTERVAL = 0.5 -- Slower raycasts
+              CONST.TARGET_SCAN_INTERVAL = 0.5 -- Slower target scanning
+              print(`⚠️ Low FPS detected (${string.format("%.1f", currentFPS)}). Simplifying calculations.`)
+          elseif not shouldSimplify and AI.State.performanceSimplified then
+              AI.State.performanceSimplified = false
+              -- Restore update frequencies
+              CONST.RAYCAST_UPDATE_INTERVAL = 0.2
+              CONST.TARGET_SCAN_INTERVAL = 0.3
+              print(`✅ FPS recovered (${string.format("%.1f", currentFPS)}). Restoring full calculations.`)
+          end
+          
+          if CONST.DEBUG_MODE then
+              print(`FPS: ${string.format("%.1f", currentFPS)} (Simplified: ${AI.State.performanceSimplified})`)
+          end
+      end
+  end
 
   local function UpdateAIState(deltaTime)
       local now = os.clock()
@@ -5960,6 +6018,9 @@ local function initializeCombatSystem(character)
       
       -- Update enemy cooldown estimation (#14)
       UpdateEnemyCooldowns(deltaTime)
+      
+      -- Update performance profiler (#20)
+      UpdatePerformanceProfiler(deltaTime)
       
       -- Periodically save character model (every 100 trials)
       if AI.ActionStats.totalTrials > 0 and AI.ActionStats.totalTrials % 100 == 0 then
