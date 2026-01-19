@@ -2184,6 +2184,14 @@ local function initializeCombatSystem(character)
       RAYCAST_DISTANCE = 30, -- Distance to check for walls (studs)
       RAYCAST_UPDATE_INTERVAL = 0.2, -- How often to update raycasts (seconds)
       RAYCAST_DIRECTIONS = 8, -- Number of raycasts around character
+      RAYCAST_DIR_RIGHT = 1,
+      RAYCAST_DIR_LEFT = 2,
+      RAYCAST_DIR_FORWARD = 3,
+      RAYCAST_DIR_BACKWARD = 4,
+      RAYCAST_DIR_FORWARD_RIGHT = 5,
+      RAYCAST_DIR_FORWARD_LEFT = 6,
+      RAYCAST_DIR_BACKWARD_RIGHT = 7,
+      RAYCAST_DIR_BACKWARD_LEFT = 8,
       CORNERED_WALL_THRESHOLD = 5, -- Number of wall hits to consider cornered
       -- Ping/Latency Adaptation (#8)
       PING_UPDATE_INTERVAL = 1.0, -- How often to update ping (seconds)
@@ -2197,6 +2205,13 @@ local function initializeCombatSystem(character)
       ENEMY_SPECIAL_COOLDOWN_ESTIMATE = 1.5, -- Estimated enemy special cooldown
       ENEMY_DASH_COOLDOWN_ESTIMATE = 0.1, -- Estimated enemy dash cooldown
       ENEMY_BLOCK_COOLDOWN_ESTIMATE = 0.8, -- Estimated enemy block cooldown
+      ENEMY_ABILITY_READY_THRESHOLD = 0.9, -- Threshold for considering ability ready (0-1)
+      ENEMY_COOLDOWNS = { -- Table for cleaner lookup
+          ATTACK = 0.3,
+          SPECIAL = 1.5,
+          DASH = 0.1,
+          BLOCK = 0.8,
+      },
       -- Performance Profiler (#20)
       PERFORMANCE_PROFILER_ENABLED = true, -- Enable performance monitoring
       PERFORMANCE_LOW_FPS_THRESHOLD = 40, -- FPS below this triggers simplification
@@ -4951,6 +4966,7 @@ local function initializeCombatSystem(character)
       -- SAFE EXPLORATION (#5): HP-based exploration strategy
       -- Only allow exploration when HP > 50%, force exploitation when HP < 30%
       local canExplore = true
+      local originalEpsilon = AI.State.epsilon
       
       if CONST.SAFE_EXPLORATION_ENABLED then
           if state.myHealthPercent < CONST.SAFE_EXPLORATION_LOW_HP_THRESHOLD then
@@ -4961,21 +4977,21 @@ local function initializeCombatSystem(character)
               end
           elseif state.myHealthPercent < CONST.SAFE_EXPLORATION_HIGH_HP_THRESHOLD then
               -- Medium HP (30-50%): Reduce exploration by 70%
-              if AI.State.epsilon then
-                  local originalEpsilon = AI.State.epsilon
-                  AI.State.epsilon = AI.State.epsilon * 0.3
-                  if CONST.DEBUG_MODE then
-                      print(string.format("⚠️ Medium HP: Reducing exploration from %.2f to %.2f", originalEpsilon, AI.State.epsilon))
-                  end
+              AI.State.epsilon = originalEpsilon * 0.3
+              if CONST.DEBUG_MODE then
+                  print(string.format("⚠️ Medium HP: Reducing exploration from %.2f to %.2f", originalEpsilon, AI.State.epsilon))
               end
           end
-          -- High HP (>50%): Normal exploration
+          -- High HP (>50%): Normal exploration (epsilon unchanged)
       end
       
       -- Exploration decision with safe exploration
       if canExplore and explorationMode == "epsilon-greedy" and math.random() < AI.State.epsilon then
           -- Epsilon-greedy: Random action
-          return actionScores[math.random(#actionScores)].action
+          local result = actionScores[math.random(#actionScores)].action
+          -- Restore original epsilon after decision
+          AI.State.epsilon = originalEpsilon
+          return result
       elseif explorationMode == "policy-gradient" or explorationMode == "aggressive-policy" then
           -- Policy gradient: Sample from policy network distribution
           local rand = math.random()
@@ -5109,13 +5125,13 @@ local function initializeCombatSystem(character)
               if state.wallRaycasts and #state.wallRaycasts > 0 then
                   local directionToCheck = nil
                   if dashDirection == Enum.KeyCode.W then
-                      directionToCheck = 3 -- Forward
+                      directionToCheck = CONST.RAYCAST_DIR_FORWARD
                   elseif dashDirection == Enum.KeyCode.S then
-                      directionToCheck = 4 -- Backward
+                      directionToCheck = CONST.RAYCAST_DIR_BACKWARD
                   elseif dashDirection == Enum.KeyCode.A then
-                      directionToCheck = 2 -- Left
+                      directionToCheck = CONST.RAYCAST_DIR_LEFT
                   elseif dashDirection == Enum.KeyCode.D then
-                      directionToCheck = 1 -- Right
+                      directionToCheck = CONST.RAYCAST_DIR_RIGHT
                   end
                   
                   -- Check if there's a wall in that direction
@@ -5142,8 +5158,9 @@ local function initializeCombatSystem(character)
               -- Choose dash direction based on tactic and distance
               if AI.State.currentTactic == "Defensive" or state.myHealthPercent < 0.3 then
                   -- WALL AWARENESS (#7): Don't backdash if cornered, use side dash instead
-                  if state.isCornered or (state.wallRaycasts and state.wallRaycasts[4] and 
-                     state.wallRaycasts[4].hit and state.wallRaycasts[4].distance < 10) then
+                  if state.isCornered or (state.wallRaycasts and state.wallRaycasts[CONST.RAYCAST_DIR_BACKWARD] and 
+                     state.wallRaycasts[CONST.RAYCAST_DIR_BACKWARD].hit and 
+                     state.wallRaycasts[CONST.RAYCAST_DIR_BACKWARD].distance < 10) then
                       -- Cornered or wall behind: dash sideways instead
                       dashDirection = math.random() > 0.5 and Enum.KeyCode.A or Enum.KeyCode.D
                       if CONST.DEBUG_MODE then
@@ -5161,8 +5178,9 @@ local function initializeCombatSystem(character)
                   dashDirection = Enum.KeyCode.W
               elseif currentDist < CONST.ATTACK_RANGE * 0.5 then
                   -- WALL AWARENESS (#7): Check for wall behind before backdashing
-                  if state.wallRaycasts and state.wallRaycasts[4] and 
-                     state.wallRaycasts[4].hit and state.wallRaycasts[4].distance < 10 then
+                  if state.wallRaycasts and state.wallRaycasts[CONST.RAYCAST_DIR_BACKWARD] and 
+                     state.wallRaycasts[CONST.RAYCAST_DIR_BACKWARD].hit and 
+                     state.wallRaycasts[CONST.RAYCAST_DIR_BACKWARD].distance < 10 then
                       -- Wall behind: dash sideways instead
                       dashDirection = math.random() > 0.5 and Enum.KeyCode.A or Enum.KeyCode.D
                   else
@@ -5918,7 +5936,7 @@ local function initializeCombatSystem(character)
       for ability, lastTime in pairs(AI.State.enemyLastActionTimes) do
           local now = os.clock()
           local timeSinceUse = now - lastTime
-          local estimatedCooldown = CONST["ENEMY_" .. ability .. "_COOLDOWN_ESTIMATE"] or 1.0
+          local estimatedCooldown = CONST.ENEMY_COOLDOWNS[ability] or 1.0
           
           -- Calculate readiness (0 = on cooldown, 1 = ready)
           AI.State.enemyCooldowns[ability] = math.min(1.0, timeSinceUse / estimatedCooldown)
@@ -6445,9 +6463,9 @@ local function initializeCombatSystem(character)
           currentPing = AI.State.currentPing,
           -- Enemy Cooldown Estimation (#14)
           enemyCooldowns = AI.State.enemyCooldowns,
-          enemyAttackReady = AI.State.enemyCooldowns.ATTACK > 0.9,
-          enemySpecialReady = AI.State.enemyCooldowns.SPECIAL > 0.9,
-          enemyDashReady = AI.State.enemyCooldowns.DASH > 0.9,
+          enemyAttackReady = AI.State.enemyCooldowns.ATTACK > CONST.ENEMY_ABILITY_READY_THRESHOLD,
+          enemySpecialReady = AI.State.enemyCooldowns.SPECIAL > CONST.ENEMY_ABILITY_READY_THRESHOLD,
+          enemyDashReady = AI.State.enemyCooldowns.DASH > CONST.ENEMY_ABILITY_READY_THRESHOLD,
       }
       
       -- Check target ragdoll/stunned state (for ultimate timing)
