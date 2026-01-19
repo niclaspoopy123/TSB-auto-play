@@ -221,7 +221,53 @@ local LocalPersistence = {
         local success, result = pcall(function()
             -- Check if file exists
             if not isfile(self.filename) then
-                print("ℹ️ No previous data found - AI will start fresh")
+                print("ℹ️ No previous data found - Loading pretrained defaults")
+                -- Try to load PretrainedData module with multiple path attempts
+                local pretrainedSuccess, PretrainedData = false, nil
+                
+                -- Try different possible locations for PretrainedData
+                local possiblePaths = {
+                    function() return require(script.Parent.PretrainedData) end,
+                    function() return require(script.PretrainedData) end,
+                    function() return require(game.StarterPlayer.StarterPlayerScripts.PretrainedData) end,
+                }
+                
+                for _, pathFunc in ipairs(possiblePaths) do
+                    pretrainedSuccess, PretrainedData = pcall(pathFunc)
+                    if pretrainedSuccess and PretrainedData then
+                        break
+                    end
+                end
+                
+                if pretrainedSuccess and PretrainedData then
+                    -- Load default weights from PretrainedData
+                    if PretrainedData.ActionStats then
+                        -- Convert PretrainedData format to AI format
+                        for tactic, actions in pairs(PretrainedData.ActionStats) do
+                            if not aiTable.ActionStats[tactic] then
+                                aiTable.ActionStats[tactic] = {total = 0}
+                            end
+                            for action, stats in pairs(actions) do
+                                aiTable.ActionStats[tactic][action] = {
+                                    count = stats.attempts or 0,
+                                    value = stats.weight or CombatConfig.DefaultActionWeight,
+                                    eligibility = 0
+                                }
+                                aiTable.ActionStats[tactic].total = (aiTable.ActionStats[tactic].total or 0) + (stats.attempts or 0)
+                            end
+                        end
+                    end
+                    if PretrainedData.FeatureWeights then
+                        for key, value in pairs(PretrainedData.FeatureWeights) do
+                            aiTable.FeatureWeights[key] = value
+                        end
+                    end
+                    print("✅ Pretrained data loaded successfully")
+                else
+                    print("⚠️ PretrainedData module not found in expected locations")
+                    print("   Place PretrainedData.lua in the same folder as Main script")
+                    print("   AI will start with default initialization")
+                end
                 return false
             end
             
@@ -436,10 +482,8 @@ local function PerformAntiAFKAction()
             end
         end,
         function() -- Crouch (if available)
-            -- Some games use C for crouch, this is a generic action
-            if character then
-                task.wait(0.1)
-            end
+            -- Some games use C for crouch, this is a generic placeholder action
+            -- No actual input needed, just a delay slot
         end
     }
     
@@ -452,6 +496,49 @@ local function PerformAntiAFKAction()
         print("Anti-AFK action performed")
     end
 end
+
+--// ================= COMBAT CONFIGURATION ================= //
+local CombatConfig = {
+    -- God Reflex Mode - Instant reaction to dangerous animations
+    GodMode = false, -- Set to true for 100% instant dodges on ultimates
+    
+    -- Tech Consistency - Controls tech usage probability
+    TechRate = 0.3, -- 0.3 = 30%, 1.0 = 100% perfect tech execution
+    
+    -- Playstyle Modes
+    Playstyle = "Adaptive", -- Options: "Adaptive", "Passive", "Aggressive", "Defensive", "Chaotic"
+    
+    -- Auto-Parry System
+    AutoParry = false, -- Set to true for perfect blocking (experimental)
+    ParryTimingOffset = 0.15, -- Time offset for parry (accounts for ping + block window)
+    ParryWindupTable = { -- Windup times for different moves (in seconds)
+        Punch = 0.3,
+        Kick = 0.5,
+        Special = 0.7,
+        Ultimate = 1.0,
+    },
+    
+    -- Win Probability Controller
+    WinProbabilityEnabled = true, -- Adapt playstyle based on HP advantage
+    WinProbHighThreshold = 0.8, -- Switch to defensive when winning
+    WinProbLowThreshold = 0.3, -- Switch to chaotic when losing
+    WinProbCriticalThreshold = 0.1, -- Use ultimate immediately when critical
+    WinProbDefaultValue = 0.5, -- Default win probability when calculation fails
+    ChaoticTemperature = 2.0, -- Boltzmann temperature when in chaotic/losing mode
+    
+    -- Wake-Up Tech
+    WakeUpTechEnabled = true, -- Auto-dodge on wake-up from ragdoll
+    
+    -- PretrainedData Defaults
+    DefaultActionWeight = 10.0, -- Default weight for actions when loading pretrained data
+    
+    -- Dangerous Animation IDs (for God Mode instant reactions)
+    DangerousAnimations = {
+        -- Add animation IDs that should trigger instant dodge
+        -- Format: [AnimationId] = true
+        -- Example: ["rbxassetid://123456789"] = true
+    },
+}
 
 --// ================= ADVANCED COMBAT TECH MACROS ================= //
 local CombatTech = {
@@ -468,7 +555,7 @@ local CombatTech = {
         
         -- Dash tech is useful after ATTACK or SPECIAL to cancel recovery frames
         if currentAction == "ATTACK" or currentAction == "SPECIAL" then
-            if communicateEvent and math.random() < 0.3 then -- 30% chance to use tech
+            if communicateEvent and math.random() < CombatConfig.TechRate then -- Configurable tech rate
                 -- Perform quick dash to cancel animation
                 local techDir = math.random() > 0.5 and Enum.KeyCode.W or Enum.KeyCode.S
                 communicateEvent:FireServer({["Dash"]=techDir, ["Key"]=Enum.KeyCode.Q, ["Goal"]="KeyPress"})
@@ -488,7 +575,7 @@ local CombatTech = {
         if not CombatTech or not CombatTech.sideDashTechEnabled then return false end
         
         -- Use side dash during active combat for unpredictability
-        if AI.State and AI.State.comboCount > 1 and math.random() < 0.2 then -- 20% chance
+        if AI.State and AI.State.comboCount > 1 and math.random() < (CombatConfig.TechRate * 0.67) then -- Proportional to tech rate
             local sideDir = math.random() > 0.5 and Enum.KeyCode.A or Enum.KeyCode.D
             if communicateEvent then
                 communicateEvent:FireServer({["Dash"]=sideDir, ["Key"]=Enum.KeyCode.Q, ["Goal"]="KeyPress"})
@@ -518,6 +605,196 @@ local CombatTech = {
         end
         
         return nil
+    end,
+    
+    -- God Mode: Instant reaction to dangerous animations
+    godModeCheck = function()
+        if not CombatConfig.GodMode then return false end
+        
+        -- Monitor opponent's animator for dangerous animations
+        if AI.State and AI.State.currentTarget and AI.State.targetHumanoid then
+            local targetChar = AI.State.currentTarget
+            local animator = targetChar:FindFirstChild("Humanoid") and targetChar.Humanoid:FindFirstChild("Animator")
+            
+            if animator then
+                local playingTracks = animator:GetPlayingAnimationTracks()
+                for _, track in ipairs(playingTracks) do
+                    local animId = track.Animation and track.Animation.AnimationId or ""
+                    
+                    -- Check if this is a dangerous animation
+                    if CombatConfig.DangerousAnimations[animId] then
+                        if CONST and CONST.DEBUG_MODE then
+                            print("⚡ GOD MODE: Detected dangerous animation!", animId)
+                        end
+                        return true
+                    end
+                    
+                    -- Also check animation name for common patterns
+                    local animName = track.Animation and track.Animation.Name or ""
+                    if animName:lower():find("ultimate") or 
+                       animName:lower():find("guard") or 
+                       animName:lower():find("break") or
+                       animName:lower():find("finisher") then
+                        if CONST and CONST.DEBUG_MODE then
+                            print("⚡ GOD MODE: Detected dangerous pattern in animation name:", animName)
+                        end
+                        return true
+                    end
+                end
+            end
+        end
+        return false
+    end,
+    
+    -- Force Side Dash for God Mode
+    forceSideDash = function()
+        if not communicateEvent then return false end
+        
+        -- Perform instant side dash
+        local sideDir = math.random() > 0.5 and Enum.KeyCode.A or Enum.KeyCode.D
+        communicateEvent:FireServer({["Dash"]=sideDir, ["Key"]=Enum.KeyCode.Q, ["Goal"]="KeyPress"})
+        
+        if CONST and CONST.DEBUG_MODE then
+            print("⚡ GOD MODE: FORCED SIDE DASH executed!")
+        end
+        return true
+    end
+}
+
+--// ================= AUTO-PARRY SYSTEM ================= //
+local AutoParry = {
+    enabled = false, -- Controlled by CombatConfig.AutoParry
+    lastParryTime = 0,
+    parryDelay = 0.5, -- Minimum delay between parries
+    scheduledParryTime = 0, -- When to execute scheduled parry
+    isParryScheduled = false,
+    
+    -- Monitor opponent animations for parrying (non-blocking)
+    monitorAnimation = function()
+        if not CombatConfig.AutoParry then return false end
+        if not AI.State or not AI.State.currentTarget then return false end
+        
+        local now = os.clock()
+        if now - AutoParry.lastParryTime < AutoParry.parryDelay then return false end
+        
+        -- Execute scheduled parry if time has come
+        if AutoParry.isParryScheduled and now >= AutoParry.scheduledParryTime then
+            AutoParry.isParryScheduled = false
+            return AutoParry.executeParry()
+        end
+        
+        -- Don't schedule new parry if one is already scheduled
+        if AutoParry.isParryScheduled then return false end
+        
+        local targetChar = AI.State.currentTarget
+        local animator = targetChar:FindFirstChild("Humanoid") and targetChar.Humanoid:FindFirstChild("Animator")
+        
+        if animator then
+            local playingTracks = animator:GetPlayingAnimationTracks()
+            for _, track in ipairs(playingTracks) do
+                local animName = track.Animation and track.Animation.Name or ""
+                
+                -- Check for attack animations
+                for moveType, windupTime in pairs(CombatConfig.ParryWindupTable) do
+                    if animName:lower():find(moveType:lower()) then
+                        -- Calculate optimal parry timing using configurable offset
+                        local parryTiming = windupTime - CombatConfig.ParryTimingOffset
+                        
+                        if parryTiming > 0 then
+                            -- Schedule parry for later
+                            AutoParry.scheduledParryTime = now + parryTiming
+                            AutoParry.isParryScheduled = true
+                            if CONST and CONST.DEBUG_MODE then
+                                print("🛡️ AUTO-PARRY scheduled for", moveType, "in", parryTiming, "seconds")
+                            end
+                            return true
+                        else
+                            -- Execute immediately if timing is already passed
+                            return AutoParry.executeParry()
+                        end
+                    end
+                end
+            end
+        end
+        return false
+    end,
+    
+    -- Execute perfect block
+    executeParry = function()
+        if not communicateEvent then return false end
+        
+        -- Press block key (F)
+        communicateEvent:FireServer({["Goal"]="KeyPress", ["Key"]=Enum.KeyCode.F})
+        
+        -- Schedule key release without blocking (non-blocking approach)
+        task.delay(0.1, function()
+            if communicateEvent then
+                communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=Enum.KeyCode.F})
+            end
+        end)
+        
+        AutoParry.lastParryTime = os.clock()
+        if CONST and CONST.DEBUG_MODE then
+            print("🛡️ AUTO-PARRY executed!")
+        end
+        return true
+    end
+}
+
+
+--// ================= WAKE-UP TECH SYSTEM ================= //
+local WakeUpTech = {
+    lastWakeUpTime = 0,
+    wakeUpCooldown = 2.0, -- Minimum delay between wake-up techs
+    wasRagdolled = false,
+    
+    -- Monitor player ragdoll state and execute wake-up tech
+    checkWakeUp = function()
+        if not CombatConfig.WakeUpTechEnabled then return false end
+        if not humanoid then return false end
+        
+        local now = os.clock()
+        if now - WakeUpTech.lastWakeUpTime < WakeUpTech.wakeUpCooldown then return false end
+        
+        local currentState = humanoid:GetState()
+        local isRagdolled = currentState == Enum.HumanoidStateType.Ragdoll or
+                           currentState == Enum.HumanoidStateType.FallingDown or
+                           currentState == Enum.HumanoidStateType.Flying
+        
+        -- Detect wake-up moment (transition from ragdoll to standing/getting up)
+        if WakeUpTech.wasRagdolled and not isRagdolled then
+            -- We just woke up - execute wake-up tech!
+            WakeUpTech.wasRagdolled = false
+            WakeUpTech.lastWakeUpTime = now
+            
+            -- Instant side dash or counter move
+            if communicateEvent then
+                local techChoice = math.random()
+                if techChoice < 0.7 then
+                    -- 70% - Side dash for safety (instant, no blocking)
+                    local sideDir = math.random() > 0.5 and Enum.KeyCode.A or Enum.KeyCode.D
+                    communicateEvent:FireServer({["Dash"]=sideDir, ["Key"]=Enum.KeyCode.Q, ["Goal"]="KeyPress"})
+                    if CONST and CONST.DEBUG_MODE then
+                        print("🌟 WAKE-UP TECH: Side dash executed!")
+                    end
+                else
+                    -- 30% - Counter attack (non-blocking key press/release)
+                    communicateEvent:FireServer({["Goal"]="KeyPress", ["Key"]=Enum.KeyCode.F})
+                    task.delay(0.05, function()
+                        if communicateEvent then
+                            communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=Enum.KeyCode.F})
+                        end
+                    end)
+                    if CONST and CONST.DEBUG_MODE then
+                        print("🌟 WAKE-UP TECH: Counter executed!")
+                    end
+                end
+                return true
+            end
+        end
+        
+        WakeUpTech.wasRagdolled = isRagdolled
+        return false
     end
 }
 
@@ -6093,8 +6370,11 @@ local function initializeCombatSystem(character)
           if shouldAwaken and (now - AI.State.lastActionTimes.AWAKEN) > CONST.AWAKEN_COOLDOWN then
               if communicateEvent then
                   communicateEvent:FireServer({["Goal"]="KeyPress", ["Key"]=CONST.AWAKEN_KEY})
-                  task.wait(0.1) -- Brief wait for activation
-                  communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=CONST.AWAKEN_KEY})
+                  task.delay(0.1, function()
+                      if communicateEvent then
+                          communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=CONST.AWAKEN_KEY})
+                      end
+                  end)
               end
               AI.State.lastActionTimes.AWAKEN = now
               AI.State.awakenAttempted = true
@@ -6130,13 +6410,113 @@ local function initializeCombatSystem(character)
           if shouldUseUltimate and state.energy >= CONST.ULTIMATE_ENERGY_COST then
               if communicateEvent then
                   communicateEvent:FireServer({["Goal"]="KeyPress", ["Key"]=CONST.ULTIMATE_KEY})
-                  task.wait(0.1) -- Brief wait for activation
-                  communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=CONST.ULTIMATE_KEY})
+                  task.delay(0.1, function()
+                      if communicateEvent then
+                          communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=CONST.ULTIMATE_KEY})
+                      end
+                  end)
               end
               AI.State.lastUltimateTime = now
               AI.State.currentEnergy -= CONST.ULTIMATE_ENERGY_COST
               print("💥 ULTIMATE USED! Reason:", ultimateReason)
               return -- Skip normal action this frame
+          end
+      end
+      
+      -- God Mode Check: Instant reaction to dangerous animations
+      if CombatConfig.GodMode and CombatTech.godModeCheck() then
+          CombatTech.forceSideDash()
+          return -- Skip normal action after god mode reaction
+      end
+      
+      -- Auto-Parry Check: Monitor for attack animations
+      if CombatConfig.AutoParry then
+          AutoParry.monitorAnimation()
+      end
+      
+      -- Wake-Up Tech Check
+      if CombatConfig.WakeUpTechEnabled then
+          WakeUpTech.checkWakeUp()
+      end
+      
+      -- Win Probability Meta-Controller
+      if CombatConfig.WinProbabilityEnabled and AI.State.targetHumanoid then
+          -- Safe HP calculation with proper null checks
+          local myMaxHealth = humanoid and humanoid.MaxHealth or 100
+          local enemyMaxHealth = AI.State.targetHumanoid and AI.State.targetHumanoid.MaxHealth or 100
+          local myHP = myHealthPercent * myMaxHealth
+          local enemyHP = targetHealthPercent * enemyMaxHealth
+          
+          -- Prevent division by zero and handle edge cases
+          local totalHP = myHP + enemyHP
+          local winProb = totalHP > 0 and (myHP / totalHP) or CombatConfig.WinProbDefaultValue
+          AI.State.lastWinProbability = winProb
+          
+          -- Adjust playstyle based on win probability
+          if winProb > CombatConfig.WinProbHighThreshold then
+              -- Winning (80%+): Switch to Defensive, only whiff punish
+              if CombatConfig.Playstyle == "Adaptive" then
+                  AI.State.currentTactic = "Defensive"
+                  if CONST and CONST.DEBUG_MODE then
+                      print("🎯 META-CONTROLLER: Winning (", string.format("%.1f%%", winProb * 100), ") - Defensive Mode")
+                  end
+              end
+          elseif winProb < CombatConfig.WinProbLowThreshold then
+              -- Losing (30%-): Switch to Chaotic, high risk moves
+              if CombatConfig.Playstyle == "Adaptive" then
+                  AI.State.currentTactic = "Aggressive"
+                  AI.State.boltzmannTemperature = CombatConfig.ChaoticTemperature -- Use configurable randomness
+                  if CONST and CONST.DEBUG_MODE then
+                      print("🎯 META-CONTROLLER: Losing (", string.format("%.1f%%", winProb * 100), ") - Chaotic Mode")
+                  end
+              end
+              
+              -- Critical HP (10%-): Use ultimate immediately if available
+              if winProb < CombatConfig.WinProbCriticalThreshold and AI.State.isAwakened then
+                  if (now - AI.State.lastUltimateTime) > CONST.ULTIMATE_COOLDOWN and 
+                     state.energy >= CONST.ULTIMATE_ENERGY_COST and distance < CONST.ATTACK_RANGE * 1.5 then
+                      if communicateEvent then
+                          communicateEvent:FireServer({["Goal"]="KeyPress", ["Key"]=CONST.ULTIMATE_KEY})
+                          task.delay(0.1, function()
+                              if communicateEvent then
+                                  communicateEvent:FireServer({["Goal"]="KeyRelease", ["Key"]=CONST.ULTIMATE_KEY})
+                              end
+                          end)
+                      end
+                      AI.State.lastUltimateTime = now
+                      AI.State.currentEnergy -= CONST.ULTIMATE_ENERGY_COST
+                      print("💥 META-CONTROLLER: DESPERATION ULTIMATE! WinProb:", string.format("%.1f%%", winProb * 100))
+                      return
+                  end
+              end
+          end
+      end
+      
+      -- Passive Playstyle: Whiff Punish Logic
+      if CombatConfig.Playstyle == "Passive" then
+          -- Only attack if enemy just missed (is attacking or just finished attacking)
+          if AI.State.isTargetAttacking then
+              -- Enemy is currently attacking - hold block or dash away
+              if state.energy >= CONST.COSTS.BLOCK and not AI.State.isBlocking then
+                  AI.Actions.Execute("BLOCK", state)
+                  return
+              elseif state.energy >= CONST.COSTS.DASH then
+                  AI.Actions.Execute("DASH", state)
+                  return
+              end
+          elseif now < AI.State.punishWindowEndTime then
+              -- Enemy just missed - punish!
+              if state.inRange and (now - AI.State.lastActionTimes.ATTACK) > CONST.ATTACK_COOLDOWN then
+                  AI.Actions.Execute("ATTACK", state)
+                  if CONST and CONST.DEBUG_MODE then
+                      print("🎯 PASSIVE WHIFF PUNISH: Attack executed!")
+                  end
+                  return
+              end
+          else
+              -- Default passive behavior: keep distance
+              AI.Actions.Execute("REPOSITION", state)
+              return
           end
       end
 
