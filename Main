@@ -238,7 +238,7 @@ local LocalPersistence = {
                             for action, stats in pairs(actions) do
                                 aiTable.ActionStats[tactic][action] = {
                                     count = stats.attempts or 0,
-                                    value = stats.weight or 10.0,
+                                    value = stats.weight or CombatConfig.DefaultActionWeight,
                                     eligibility = 0
                                 }
                                 aiTable.ActionStats[tactic].total = (aiTable.ActionStats[tactic].total or 0) + (stats.attempts or 0)
@@ -498,6 +498,7 @@ local CombatConfig = {
     
     -- Auto-Parry System
     AutoParry = false, -- Set to true for perfect blocking (experimental)
+    ParryTimingOffset = 0.15, -- Time offset for parry (accounts for ping + block window)
     ParryWindupTable = { -- Windup times for different moves (in seconds)
         Punch = 0.3,
         Kick = 0.5,
@@ -510,9 +511,14 @@ local CombatConfig = {
     WinProbHighThreshold = 0.8, -- Switch to defensive when winning
     WinProbLowThreshold = 0.3, -- Switch to chaotic when losing
     WinProbCriticalThreshold = 0.1, -- Use ultimate immediately when critical
+    WinProbDefaultValue = 0.5, -- Default win probability when calculation fails
+    ChaoticTemperature = 2.0, -- Boltzmann temperature when in chaotic/losing mode
     
     -- Wake-Up Tech
     WakeUpTechEnabled = true, -- Auto-dodge on wake-up from ragdoll
+    
+    -- PretrainedData Defaults
+    DefaultActionWeight = 10.0, -- Default weight for actions when loading pretrained data
     
     -- Dangerous Animation IDs (for God Mode instant reactions)
     DangerousAnimations = {
@@ -679,9 +685,8 @@ local AutoParry = {
                 -- Check for attack animations
                 for moveType, windupTime in pairs(CombatConfig.ParryWindupTable) do
                     if animName:lower():find(moveType:lower()) then
-                        -- Calculate optimal parry timing
-                        -- Account for ping (estimate ~0.05s) and perfect block window
-                        local parryTiming = windupTime - 0.15
+                        -- Calculate optimal parry timing using configurable offset
+                        local parryTiming = windupTime - CombatConfig.ParryTimingOffset
                         
                         if parryTiming > 0 then
                             -- Schedule parry for later
@@ -6432,7 +6437,7 @@ local function initializeCombatSystem(character)
           
           -- Prevent division by zero and handle edge cases
           local totalHP = myHP + enemyHP
-          local winProb = totalHP > 0 and (myHP / totalHP) or 0.5 -- Default to 50% if both dead
+          local winProb = totalHP > 0 and (myHP / totalHP) or CombatConfig.WinProbDefaultValue
           AI.State.lastWinProbability = winProb
           
           -- Adjust playstyle based on win probability
@@ -6448,7 +6453,7 @@ local function initializeCombatSystem(character)
               -- Losing (30%-): Switch to Chaotic, high risk moves
               if CombatConfig.Playstyle == "Adaptive" then
                   AI.State.currentTactic = "Aggressive"
-                  AI.State.boltzmannTemperature = 2.0 -- Increase randomness
+                  AI.State.boltzmannTemperature = CombatConfig.ChaoticTemperature -- Use configurable randomness
                   if CONST and CONST.DEBUG_MODE then
                       print("🎯 META-CONTROLLER: Losing (", string.format("%.1f%%", winProb * 100), ") - Chaotic Mode")
                   end
