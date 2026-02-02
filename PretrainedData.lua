@@ -9,9 +9,11 @@
     - MINOR: New features (backward compatible)
     - PATCH: Bug fixes (backward compatible)
     
-    Current Version: 1.0.0
-    - Initial release with default weights for all tactics
-    - Compatible with Main script V37.3+
+    Current Version: 1.1.0
+    - Enhanced with improved adaptive AI features
+    - Added playstyle-based learning rate adjustments
+    - Increased LSTM hidden size for better pattern memory
+    - Compatible with Main script V37.4+ (Enhanced Adaptivity)
     
     Future compatibility checking:
     - When loading, Main script can check PretrainedData.Version
@@ -21,7 +23,7 @@
 
 local PretrainedData = {
     -- Version for compatibility checking
-    Version = "1.0.0",
+    Version = "1.1.0",
     
     -- Default Action Statistics (Q-values for each tactic)
     ActionStats = {
@@ -99,6 +101,27 @@ local PretrainedData = {
         stabilityScore = 0.5,
         recentPerformanceWindow = {},
         adaptiveDecayMultiplier = 0.9995,
+        -- Health-based strategy thresholds
+        healthStrategyThresholds = {
+            aggressive = 0.65,
+            defensive = 0.35,
+            finisher = 0.25,
+        },
+        currentHealthStrategy = "Balanced",
+    },
+    
+    -- Default Opponent Playstyle Profile
+    OpponentPlaystyleProfile = {
+        type = "Balanced",
+        confidence = 0.5,
+        adaptiveLearningRate = 0.55,
+        reactionPattern = "Normal",
+    },
+    
+    -- Default LSTM Model Configuration
+    LSTMConfig = {
+        hiddenSize = 24, -- Increased from 16 for better pattern memory
+        sequenceLength = 0,
     },
     
     -- Default Character Models (basic weights for common characters)
