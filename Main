@@ -3,13 +3,24 @@
 --// to ensure it runs automatically and persists when your character changes.
 --// NOTE: This script uses Luau (Roblox Lua) which supports += operators and other modern syntax.
 -- =================================================================================
---// SELF-LEARNING COMBAT FRAMEWORK V37.3 - "PROJECT DEEP APEX ELITE" (Enhanced by GitHub Copilot)
+--// SELF-LEARNING COMBAT FRAMEWORK V37.4 - "PROJECT DEEP APEX ADAPTIVE" (Enhanced by GitHub Copilot)
 --// USER: niclaspoopy123
---// BUILD DATE: 2025-12-07
---// UPDATE: Enhanced learning convergence, optimized combo system, superior prediction accuracy, smarter defensive AI.
---// CHANGE: Critical AI improvements: 40% better damage output through enhanced combos, 25% improved prediction accuracy, smarter energy management, better defensive responses.
+--// BUILD DATE: 2026-02-02
+--// UPDATE: Enhanced AI adaptivity with opponent profiling, playstyle detection, and context-aware learning.
+--// CHANGE: Major adaptivity improvements: Opponent playstyle detection, combo-chain prediction, health-based strategy switching, adaptive learning rates per opponent type.
 -- =================================================================================
 --[[
+V37.4 PATCH NOTES (PROJECT DEEP APEX ADAPTIVE):
+- NEW (OPPONENT PLAYSTYLE DETECTION): AI now classifies opponents as Aggressive/Defensive/Technical/Balanced with 4 different learning rate strategies
+- NEW (COMBO-CHAIN PREDICTION): Multi-step action sequence prediction (e.g., "ATTACK->SPECIAL") with confidence-based forecasting for better anticipation
+- NEW (HEALTH-BASED STRATEGY SWITCHING): Context-aware tactic selection based on health thresholds (aggressive/defensive/finisher/balanced)
+- NEW (REACTION PATTERN DETECTION): Classifies opponent patterns as Predictable/Random/Adaptive/Normal for better counter-play
+- IMPROVED (LSTM OPPONENT MODEL): Hidden size increased 16->24 (50% increase) for superior pattern memory and sequence recognition
+- IMPROVED (ADAPTIVE LEARNING RATE): Per-opponent learning rates adjust 0.50-0.65 based on detected playstyle (aggressive=0.60, defensive=0.50, technical=0.65)
+- IMPROVED (TACTIC SELECTION): Playstyle-aware tactic scoring with counter-strategies (aggressive opponent → defensive+1.3x, defensive opponent → aggressive+1.3x)
+- OPTIMIZED (PATTERN RECOGNITION): Better confidence thresholds for combo chains (60%+ confidence) and action sequence predictions
+- OPTIMIZED (PRETRAINING DATA): Updated defaults for enhanced LSTM size and playstyle profiles in PretrainedData v1.1.0
+
 V37.3 PATCH NOTES (PROJECT DEEP APEX ELITE):
 - NEW (ULTRA COMBO SCALING): Combo multipliers now scale exponentially up to 3.0x with improved formula: 1.0 + (count * 0.19) + (count^1.20 * 0.05) for maximum damage
 - NEW (ENHANCED PREDICTION): Multi-tier velocity prediction (6 tiers) with improved acceleration weighting (0.6x for heavy acceleration) for 25% better accuracy
