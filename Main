@@ -2487,6 +2487,27 @@ local function initializeCombatSystem(character)
       TARGET_RAGDOLL_CHECK_INTERVAL = 0.2, -- How often to check target ragdoll state
       AWAKEN_ENERGY_COST = 0, -- Energy cost to awaken (usually free)
       ULTIMATE_ENERGY_COST = 50, -- Energy cost for ultimate
+      -- V37.4 Adaptivity constants
+      COMBO_CHAIN_CONFIDENCE_THRESHOLD = 0.6, -- 60% confidence required for combo-chain predictions
+      PLAYSTYLE_MIN_ACTIONS = 10, -- Minimum actions needed to classify playstyle
+      PLAYSTYLE_AGGRESSIVE_THRESHOLD = 0.55, -- 55%+ attack/special = aggressive
+      PLAYSTYLE_DEFENSIVE_THRESHOLD = 0.45, -- 45%+ evade/block = defensive
+      PLAYSTYLE_TECHNICAL_FEINT_THRESHOLD = 0.15, -- 15%+ feints = technical
+      PLAYSTYLE_TECHNICAL_MOVEMENT_THRESHOLD = 0.35, -- 35%+ movement = technical
+      REACTION_PATTERN_MIN_HISTORY = 10, -- Minimum action history for pattern detection
+      REACTION_PATTERN_PREDICTABLE_MAX = 2, -- ≤2 unique actions = predictable
+      REACTION_PATTERN_RANDOM_MIN = 5, -- ≥5 unique actions = random
+      REACTION_PATTERN_ADAPTIVE_MIN_SEQ = 15, -- Minimum sequence length for adaptive detection
+      REACTION_PATTERN_ADAPTIVE_MIN_PATTERNS = 5, -- Minimum patterns for adaptive detection
+      HEALTH_STRATEGY_FINISHER_THRESHOLD = 0.25, -- Switch to finisher when opponent <25% HP
+      HEALTH_STRATEGY_AGGRESSIVE_THRESHOLD = 0.65, -- Switch to aggressive when opponent <65% HP
+      HEALTH_STRATEGY_DEFENSIVE_THRESHOLD = 0.35, -- Switch to defensive when player <35% HP
+      TACTIC_SCORE_FINISHER_BOOST = 1.5, -- Finisher tactic multiplier in finisher strategy
+      TACTIC_SCORE_AGGRESSIVE_BOOST = 1.4, -- Aggressive tactic multiplier in aggressive strategy
+      TACTIC_SCORE_DEFENSIVE_BOOST = 1.5, -- Defensive tactic multiplier in defensive strategy
+      TACTIC_SCORE_COUNTER_AGGRESSIVE = 1.3, -- Defensive/BaitAndPunish boost vs aggressive opponent
+      TACTIC_SCORE_COUNTER_DEFENSIVE = 1.3, -- Aggressive/Finisher boost vs defensive opponent
+      TACTIC_SCORE_COUNTER_TECHNICAL = 1.2, -- Aggressive boost vs technical opponent
   }
 
   --// --- STATE MANAGEMENT ---
@@ -4163,7 +4184,7 @@ local function initializeCombatSystem(character)
                   if mostLikely and maxCount >= 2 then
                       AI.LSTMOpponentModel.comboChainConfidence[comboKey] = maxCount / AI.LSTMOpponentModel.comboChains[comboKey].count
                       -- Store in prediction if confidence is high
-                      if AI.LSTMOpponentModel.comboChainConfidence[comboKey] > 0.6 then
+                      if AI.LSTMOpponentModel.comboChainConfidence[comboKey] > CONST.COMBO_CHAIN_CONFIDENCE_THRESHOLD then
                           AI.OpponentModel.predictedNextAction = mostLikely
                       end
                   end
@@ -4182,8 +4203,8 @@ local function initializeCombatSystem(character)
           totalActions += count
       end
       
-      -- Need at least 10 actions to classify
-      if totalActions < 10 then
+      -- Need at least minimum actions to classify
+      if totalActions < CONST.PLAYSTYLE_MIN_ACTIONS then
           return
       end
       
@@ -4195,15 +4216,15 @@ local function initializeCombatSystem(character)
       -- Classify playstyle based on action distribution
       local profile = AI.OpponentModel.playstyleProfile
       
-      if attackPercent > 0.55 then
+      if attackPercent > CONST.PLAYSTYLE_AGGRESSIVE_THRESHOLD then
           profile.type = "Aggressive"
           profile.confidence = attackPercent
           profile.adaptiveLearningRate = 0.60 -- Learn faster against aggressive opponents
-      elseif defensePercent > 0.45 then
+      elseif defensePercent > CONST.PLAYSTYLE_DEFENSIVE_THRESHOLD then
           profile.type = "Defensive"
           profile.confidence = defensePercent
           profile.adaptiveLearningRate = 0.50 -- Slower learning for defensive opponents
-      elseif feintPercent > 0.15 or movementPercent > 0.35 then
+      elseif feintPercent > CONST.PLAYSTYLE_TECHNICAL_FEINT_THRESHOLD or movementPercent > CONST.PLAYSTYLE_TECHNICAL_MOVEMENT_THRESHOLD then
           profile.type = "Technical"
           profile.confidence = math.max(feintPercent * 2, movementPercent)
           profile.adaptiveLearningRate = 0.65 -- Learn faster against technical players
@@ -4214,7 +4235,7 @@ local function initializeCombatSystem(character)
       end
       
       -- Detect reaction pattern based on action variability
-      if #AI.OpponentModel.lastActions >= 10 then
+      if #AI.OpponentModel.lastActions >= CONST.REACTION_PATTERN_MIN_HISTORY then
           local uniqueActions = {}
           for _, act in ipairs(AI.OpponentModel.lastActions) do
               uniqueActions[act] = true
@@ -4224,11 +4245,11 @@ local function initializeCombatSystem(character)
               varietyCount += 1
           end
           
-          if varietyCount <= 2 then
+          if varietyCount <= CONST.REACTION_PATTERN_PREDICTABLE_MAX then
               profile.reactionPattern = "Predictable"
-          elseif varietyCount >= 5 then
+          elseif varietyCount >= CONST.REACTION_PATTERN_RANDOM_MIN then
               profile.reactionPattern = "Random"
-          elseif AI.LSTMOpponentModel.sequenceLength >= 15 and #AI.LSTMOpponentModel.patterns > 5 then
+          elseif AI.LSTMOpponentModel.sequenceLength >= CONST.REACTION_PATTERN_ADAPTIVE_MIN_SEQ and #AI.LSTMOpponentModel.patterns > CONST.REACTION_PATTERN_ADAPTIVE_MIN_PATTERNS then
               profile.reactionPattern = "Adaptive"
           else
               profile.reactionPattern = "Normal"
@@ -4813,13 +4834,13 @@ local function initializeCombatSystem(character)
       -- NEW: Apply health-based strategy adjustments
       local healthStrategy = AI.MetaLearning.currentHealthStrategy
       if healthStrategy == "Finisher" then
-          baseScores.Finisher *= 1.5
+          baseScores.Finisher *= CONST.TACTIC_SCORE_FINISHER_BOOST
           baseScores.Aggressive *= 1.3
       elseif healthStrategy == "Aggressive" then
-          baseScores.Aggressive *= 1.4
+          baseScores.Aggressive *= CONST.TACTIC_SCORE_AGGRESSIVE_BOOST
           baseScores.BaitAndPunish *= 1.2
       elseif healthStrategy == "Defensive" then
-          baseScores.Defensive *= 1.5
+          baseScores.Defensive *= CONST.TACTIC_SCORE_DEFENSIVE_BOOST
           baseScores.BaitAndPunish *= 1.1
       end
       
@@ -4828,15 +4849,15 @@ local function initializeCombatSystem(character)
       if playstyle and playstyle.confidence > 0.6 then
           if playstyle.type == "Aggressive" then
               -- Counter aggressive with defensive/counter tactics
-              baseScores.Defensive *= 1.3
+              baseScores.Defensive *= CONST.TACTIC_SCORE_COUNTER_AGGRESSIVE
               baseScores.BaitAndPunish *= 1.4
           elseif playstyle.type == "Defensive" then
               -- Break defensive with aggressive pressure
-              baseScores.Aggressive *= 1.3
+              baseScores.Aggressive *= CONST.TACTIC_SCORE_COUNTER_DEFENSIVE
               baseScores.Finisher *= 1.2
           elseif playstyle.type == "Technical" then
               -- Counter technical with straightforward aggression
-              baseScores.Aggressive *= 1.2
+              baseScores.Aggressive *= CONST.TACTIC_SCORE_COUNTER_TECHNICAL
               baseScores.Counter *= 1.3
           end
       end
