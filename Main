@@ -3762,7 +3762,7 @@ local function initializeCombatSystem(character)
       
       -- NEW: Apply playstyle-based learning rate modifier
       if AI.OpponentModel.playstyleProfile and AI.OpponentModel.playstyleProfile.adaptiveLearningRate then
-          learningRate = learningRate * (AI.OpponentModel.playstyleProfile.adaptiveLearningRate / 0.55)
+          learningRate = learningRate * (AI.OpponentModel.playstyleProfile.adaptiveLearningRate / CONST.PLAYSTYLE_BALANCED_LEARNING_RATE)
       end
 
       -- Deep Q-Learning: Use neural network predictions with distributional RL
@@ -4167,8 +4167,9 @@ local function initializeCombatSystem(character)
           
           -- NEW: Combo-chain prediction (multi-step action sequences)
           if #AI.OpponentModel.lastActions >= 2 then
-              local lastAction = AI.OpponentModel.lastActions[#AI.OpponentModel.lastActions - 1]
-              local currentAction = AI.OpponentModel.lastActions[#AI.OpponentModel.lastActions]
+              local historyLength = #AI.OpponentModel.lastActions
+              local lastAction = AI.OpponentModel.lastActions[historyLength - 1]
+              local currentAction = AI.OpponentModel.lastActions[historyLength]
               local comboKey = lastAction .. "->" .. currentAction
               
               if not AI.LSTMOpponentModel.comboChains[comboKey] then
@@ -4221,10 +4222,11 @@ local function initializeCombatSystem(character)
           return
       end
       
-      local attackPercent = (AI.OpponentModel.actionFrequency.ATTACK + AI.OpponentModel.actionFrequency.SPECIAL) / totalActions
-      local defensePercent = (AI.OpponentModel.actionFrequency.EVADE + AI.OpponentModel.actionFrequency.BLOCK) / totalActions
-      local movementPercent = (AI.OpponentModel.actionFrequency.DASH + AI.OpponentModel.actionFrequency.REPOSITION) / totalActions
-      local feintPercent = AI.OpponentModel.actionFrequency.FEINT / totalActions
+      -- Use safe accessors with 0 fallback for potentially uninitialized actions
+      local attackPercent = ((AI.OpponentModel.actionFrequency.ATTACK or 0) + (AI.OpponentModel.actionFrequency.SPECIAL or 0)) / totalActions
+      local defensePercent = ((AI.OpponentModel.actionFrequency.EVADE or 0) + (AI.OpponentModel.actionFrequency.BLOCK or 0)) / totalActions
+      local movementPercent = ((AI.OpponentModel.actionFrequency.DASH or 0) + (AI.OpponentModel.actionFrequency.REPOSITION or 0)) / totalActions
+      local feintPercent = (AI.OpponentModel.actionFrequency.FEINT or 0) / totalActions
       
       -- Classify playstyle based on action distribution
       local profile = AI.OpponentModel.playstyleProfile
@@ -4247,12 +4249,17 @@ local function initializeCombatSystem(character)
           profile.adaptiveLearningRate = CONST.PLAYSTYLE_BALANCED_LEARNING_RATE
       end
       
-      -- Detect reaction pattern based on action variability
+      -- Detect reaction pattern based on action variability (only last N actions)
       if #AI.OpponentModel.lastActions >= CONST.REACTION_PATTERN_MIN_HISTORY then
           local uniqueActions = {}
-          for _, act in ipairs(AI.OpponentModel.lastActions) do
-              uniqueActions[act] = true
+          local historyLength = #AI.OpponentModel.lastActions
+          local startIndex = math.max(1, historyLength - CONST.REACTION_PATTERN_MIN_HISTORY + 1)
+          
+          -- Only analyze the most recent REACTION_PATTERN_MIN_HISTORY actions
+          for i = startIndex, historyLength do
+              uniqueActions[AI.OpponentModel.lastActions[i]] = true
           end
+          
           local varietyCount = 0
           for _ in pairs(uniqueActions) do
               varietyCount += 1
