@@ -3,13 +3,24 @@
 --// to ensure it runs automatically and persists when your character changes.
 --// NOTE: This script uses Luau (Roblox Lua) which supports += operators and other modern syntax.
 -- =================================================================================
---// SELF-LEARNING COMBAT FRAMEWORK V37.3 - "PROJECT DEEP APEX ELITE" (Enhanced by GitHub Copilot)
+--// SELF-LEARNING COMBAT FRAMEWORK V37.4 - "PROJECT DEEP APEX ADAPTIVE" (Enhanced by GitHub Copilot)
 --// USER: niclaspoopy123
---// BUILD DATE: 2025-12-07
---// UPDATE: Enhanced learning convergence, optimized combo system, superior prediction accuracy, smarter defensive AI.
---// CHANGE: Critical AI improvements: 40% better damage output through enhanced combos, 25% improved prediction accuracy, smarter energy management, better defensive responses.
+--// BUILD DATE: 2026-02-02
+--// UPDATE: Enhanced AI adaptivity with opponent profiling, playstyle detection, and context-aware learning.
+--// CHANGE: Major adaptivity improvements: Opponent playstyle detection, combo-chain prediction, health-based strategy switching, adaptive learning rates per opponent type.
 -- =================================================================================
 --[[
+V37.4 PATCH NOTES (PROJECT DEEP APEX ADAPTIVE):
+- NEW (OPPONENT PLAYSTYLE DETECTION): AI now classifies opponents as Aggressive/Defensive/Technical/Balanced with 4 different learning rate strategies
+- NEW (COMBO-CHAIN PREDICTION): Multi-step action sequence prediction (e.g., "ATTACK->SPECIAL") with confidence-based forecasting for better anticipation
+- NEW (HEALTH-BASED STRATEGY SWITCHING): Context-aware tactic selection based on health thresholds (aggressive/defensive/finisher/balanced)
+- NEW (REACTION PATTERN DETECTION): Classifies opponent patterns as Predictable/Random/Adaptive/Normal for better counter-play
+- IMPROVED (LSTM OPPONENT MODEL): Hidden size increased 16->24 (50% increase) for superior pattern memory and sequence recognition
+- IMPROVED (ADAPTIVE LEARNING RATE): Per-opponent learning rates adjust 0.50-0.65 based on detected playstyle (aggressive=0.60, defensive=0.50, technical=0.65)
+- IMPROVED (TACTIC SELECTION): Playstyle-aware tactic scoring with counter-strategies (aggressive opponent → defensive+1.3x, defensive opponent → aggressive+1.3x)
+- OPTIMIZED (PATTERN RECOGNITION): Better confidence thresholds for combo chains (60%+ confidence) and action sequence predictions
+- OPTIMIZED (PRETRAINING DATA): Updated defaults for enhanced LSTM size and playstyle profiles in PretrainedData v1.1.0
+
 V37.3 PATCH NOTES (PROJECT DEEP APEX ELITE):
 - NEW (ULTRA COMBO SCALING): Combo multipliers now scale exponentially up to 3.0x with improved formula: 1.0 + (count * 0.19) + (count^1.20 * 0.05) for maximum damage
 - NEW (ENHANCED PREDICTION): Multi-tier velocity prediction (6 tiers) with improved acceleration weighting (0.6x for heavy acceleration) for 25% better accuracy
@@ -1377,6 +1388,15 @@ local AI = {
       currentOpponentName = nil,
       -- Active weights pointer (points to current opponent's weights)
       activeWeights = nil,
+      -- Playstyle detection for adaptive strategy
+      playstyleProfile = {
+          type = "Balanced", -- "Aggressive", "Defensive", "Technical", "Balanced"
+          confidence = 0.5, -- 0-1, confidence in classification
+          adaptiveLearningRate = 0.55, -- Per-opponent learning rate
+          reactionPattern = "Normal", -- "Predictable", "Random", "Adaptive", "Normal"
+      },
+      -- Per-character adaptive parameters
+      characterSpecificData = {}, -- Format: ["Saitama"] = { learningRateModifier = 1.0, comboEffectiveness = {} }
   },
   --// OPPONENT BEHAVIOR MODELING (COUNTER-AI): Markov Chain for sequence prediction
   OpponentBehaviorModel = {
@@ -1441,6 +1461,13 @@ local AI = {
       baseDecayMultiplier = 0.995, -- Default decay multiplier
       adaptiveSuccessMultiplier = 1.08, -- Adjusted based on volatility
       adaptiveDecayMultiplier = 0.995, -- Adjusted based on volatility
+      -- Context-aware health-based strategy switching
+      healthStrategyThresholds = {
+          aggressive = 0.65, -- Switch to aggressive when opponent < 65% HP
+          defensive = 0.35, -- Switch to defensive when we < 35% HP
+          finisher = 0.25, -- Switch to finisher when opponent < 25% HP
+      },
+      currentHealthStrategy = "Balanced", -- "Aggressive", "Defensive", "Finisher", "Balanced"
   },
   --// DYNAMIC DIFFICULTY ADJUSTMENT: Adapt to player skill level
   DynamicDifficulty = {
@@ -1565,13 +1592,16 @@ local AI = {
       -- Simplified LSTM-like cell states
       cellState = {},
       hiddenState = {},
-      hiddenSize = 16,
+      hiddenSize = 24, -- Increased from 16 for better pattern memory
       sequenceLength = 0,
       -- Pattern memory
       patterns = {}, -- Learned action sequences
       patternConfidence = {},
       -- Attention mechanism for recent actions
       attentionWeights = {},
+      -- Combo-chain prediction for multi-step sequences
+      comboChains = {}, -- Format: ["ATTACK->SPECIAL"] = { count = 5, nextActions = {...} }
+      comboChainConfidence = {},
   },
   --// CURIOSITY MODULE: Intrinsic motivation for exploration with ICM
   CuriosityModule = {
@@ -2457,6 +2487,40 @@ local function initializeCombatSystem(character)
       TARGET_RAGDOLL_CHECK_INTERVAL = 0.2, -- How often to check target ragdoll state
       AWAKEN_ENERGY_COST = 0, -- Energy cost to awaken (usually free)
       ULTIMATE_ENERGY_COST = 50, -- Energy cost for ultimate
+      -- V37.4 Adaptivity constants
+      COMBO_CHAIN_CONFIDENCE_THRESHOLD = 0.6, -- 60% confidence required for combo-chain predictions
+      PLAYSTYLE_MIN_ACTIONS = 10, -- Minimum actions needed to classify playstyle
+      PLAYSTYLE_AGGRESSIVE_THRESHOLD = 0.55, -- 55%+ attack/special = aggressive
+      PLAYSTYLE_DEFENSIVE_THRESHOLD = 0.45, -- 45%+ evade/block = defensive
+      PLAYSTYLE_TECHNICAL_FEINT_THRESHOLD = 0.15, -- 15%+ feints = technical
+      PLAYSTYLE_TECHNICAL_MOVEMENT_THRESHOLD = 0.35, -- 35%+ movement = technical
+      PLAYSTYLE_TECHNICAL_FEINT_WEIGHT = 2, -- Feint percentage is weighted 2x for technical detection
+      PLAYSTYLE_CONFIDENCE_THRESHOLD = 0.6, -- Minimum confidence to apply playstyle adjustments
+      PLAYSTYLE_AGGRESSIVE_LEARNING_RATE = 0.60, -- Learning rate vs aggressive opponents
+      PLAYSTYLE_DEFENSIVE_LEARNING_RATE = 0.50, -- Learning rate vs defensive opponents
+      PLAYSTYLE_TECHNICAL_LEARNING_RATE = 0.65, -- Learning rate vs technical opponents
+      PLAYSTYLE_BALANCED_LEARNING_RATE = 0.55, -- Default learning rate vs balanced opponents
+      REACTION_PATTERN_MIN_HISTORY = 10, -- Minimum action history for pattern detection
+      REACTION_PATTERN_PREDICTABLE_MAX = 2, -- ≤2 unique actions = predictable
+      REACTION_PATTERN_RANDOM_MIN = 5, -- ≥5 unique actions = random
+      REACTION_PATTERN_ADAPTIVE_MIN_SEQ = 15, -- Minimum sequence length for adaptive detection
+      REACTION_PATTERN_ADAPTIVE_MIN_PATTERNS = 5, -- Minimum patterns for adaptive detection
+      HEALTH_STRATEGY_FINISHER_THRESHOLD = 0.25, -- Switch to finisher when opponent <25% HP
+      HEALTH_STRATEGY_AGGRESSIVE_THRESHOLD = 0.65, -- Switch to aggressive when opponent <65% HP
+      HEALTH_STRATEGY_DEFENSIVE_THRESHOLD = 0.35, -- Switch to defensive when player <35% HP
+      HEALTH_STRATEGY_BALANCED_THRESHOLD = 0.5, -- Health threshold for aggressive strategy qualification
+      TACTIC_SCORE_FINISHER_BOOST = 1.5, -- Finisher tactic multiplier in finisher strategy
+      TACTIC_SCORE_FINISHER_AGGRESSIVE_BOOST = 1.3, -- Aggressive tactic boost in finisher strategy
+      TACTIC_SCORE_AGGRESSIVE_BOOST = 1.4, -- Aggressive tactic multiplier in aggressive strategy
+      TACTIC_SCORE_AGGRESSIVE_BAIT_BOOST = 1.2, -- BaitAndPunish boost in aggressive strategy
+      TACTIC_SCORE_DEFENSIVE_BOOST = 1.5, -- Defensive tactic multiplier in defensive strategy
+      TACTIC_SCORE_DEFENSIVE_BAIT_BOOST = 1.1, -- BaitAndPunish boost in defensive strategy
+      TACTIC_SCORE_COUNTER_AGGRESSIVE = 1.3, -- Defensive boost vs aggressive opponent
+      TACTIC_SCORE_COUNTER_AGGRESSIVE_BAIT = 1.4, -- BaitAndPunish boost vs aggressive opponent
+      TACTIC_SCORE_COUNTER_DEFENSIVE = 1.3, -- Aggressive boost vs defensive opponent
+      TACTIC_SCORE_COUNTER_DEFENSIVE_FINISHER = 1.2, -- Finisher boost vs defensive opponent
+      TACTIC_SCORE_COUNTER_TECHNICAL = 1.2, -- Aggressive boost vs technical opponent
+      TACTIC_SCORE_COUNTER_TECHNICAL_COUNTER = 1.3, -- Counter boost vs technical opponent
   }
 
   --// --- STATE MANAGEMENT ---
@@ -3695,6 +3759,11 @@ local function initializeCombatSystem(character)
       
       -- Use adaptive learning rate for meta-learning as well
       AI.MetaLearning.adaptiveLearningRate = learningRate
+      
+      -- NEW: Apply playstyle-based learning rate modifier
+      if AI.OpponentModel.playstyleProfile and AI.OpponentModel.playstyleProfile.adaptiveLearningRate then
+          learningRate = learningRate * (AI.OpponentModel.playstyleProfile.adaptiveLearningRate / CONST.PLAYSTYLE_BALANCED_LEARNING_RATE)
+      end
 
       -- Deep Q-Learning: Use neural network predictions with distributional RL
       local nextMaxQValue = 0
@@ -4095,6 +4164,132 @@ local function initializeCombatSystem(character)
                   end
               end
           end
+          
+          -- NEW: Combo-chain prediction (multi-step action sequences)
+          if #AI.OpponentModel.lastActions >= 2 then
+              local historyLength = #AI.OpponentModel.lastActions
+              local lastAction = AI.OpponentModel.lastActions[historyLength - 1]
+              local currentAction = AI.OpponentModel.lastActions[historyLength]
+              local comboKey = lastAction .. "->" .. currentAction
+              
+              if not AI.LSTMOpponentModel.comboChains[comboKey] then
+                  AI.LSTMOpponentModel.comboChains[comboKey] = { count = 0, nextActions = {} }
+              end
+              
+              AI.LSTMOpponentModel.comboChains[comboKey].count += 1
+              table.insert(AI.LSTMOpponentModel.comboChains[comboKey].nextActions, observedAction)
+              
+              -- Predict next action in combo chain if we have enough data
+              if AI.LSTMOpponentModel.comboChains[comboKey].count >= 3 then
+                  local nextActionCounts = {}
+                  for _, act in ipairs(AI.LSTMOpponentModel.comboChains[comboKey].nextActions) do
+                      nextActionCounts[act] = (nextActionCounts[act] or 0) + 1
+                  end
+                  
+                  local maxCount = 0
+                  local mostLikely = nil
+                  for act, count in pairs(nextActionCounts) do
+                      if count > maxCount then
+                          maxCount = count
+                          mostLikely = act
+                      end
+                  end
+                  
+                  if mostLikely and maxCount >= 2 then
+                      AI.LSTMOpponentModel.comboChainConfidence[comboKey] = maxCount / AI.LSTMOpponentModel.comboChains[comboKey].count
+                      -- Store in prediction if confidence is high
+                      if AI.LSTMOpponentModel.comboChainConfidence[comboKey] > CONST.COMBO_CHAIN_CONFIDENCE_THRESHOLD then
+                          AI.OpponentModel.predictedNextAction = mostLikely
+                      end
+                  end
+              end
+          end
+          
+          -- NEW: Playstyle detection for adaptive strategy
+          AI.Learning.UpdatePlaystyleProfile()
+      end
+  end
+  
+  -- NEW: Detect and classify opponent playstyle for adaptive strategy
+  function AI.Learning.UpdatePlaystyleProfile()
+      local totalActions = 0
+      for _, count in pairs(AI.OpponentModel.actionFrequency) do
+          totalActions += count
+      end
+      
+      -- Need at least minimum actions to classify
+      if totalActions < CONST.PLAYSTYLE_MIN_ACTIONS then
+          return
+      end
+      
+      -- Use safe accessors with 0 fallback for potentially uninitialized actions
+      local attackPercent = ((AI.OpponentModel.actionFrequency.ATTACK or 0) + (AI.OpponentModel.actionFrequency.SPECIAL or 0)) / totalActions
+      local defensePercent = ((AI.OpponentModel.actionFrequency.EVADE or 0) + (AI.OpponentModel.actionFrequency.BLOCK or 0)) / totalActions
+      local movementPercent = ((AI.OpponentModel.actionFrequency.DASH or 0) + (AI.OpponentModel.actionFrequency.REPOSITION or 0)) / totalActions
+      local feintPercent = (AI.OpponentModel.actionFrequency.FEINT or 0) / totalActions
+      
+      -- Classify playstyle based on action distribution
+      local profile = AI.OpponentModel.playstyleProfile
+      
+      if attackPercent > CONST.PLAYSTYLE_AGGRESSIVE_THRESHOLD then
+          profile.type = "Aggressive"
+          profile.confidence = attackPercent
+          profile.adaptiveLearningRate = CONST.PLAYSTYLE_AGGRESSIVE_LEARNING_RATE
+      elseif defensePercent > CONST.PLAYSTYLE_DEFENSIVE_THRESHOLD then
+          profile.type = "Defensive"
+          profile.confidence = defensePercent
+          profile.adaptiveLearningRate = CONST.PLAYSTYLE_DEFENSIVE_LEARNING_RATE
+      elseif feintPercent > CONST.PLAYSTYLE_TECHNICAL_FEINT_THRESHOLD or movementPercent > CONST.PLAYSTYLE_TECHNICAL_MOVEMENT_THRESHOLD then
+          profile.type = "Technical"
+          profile.confidence = math.max(feintPercent * CONST.PLAYSTYLE_TECHNICAL_FEINT_WEIGHT, movementPercent)
+          profile.adaptiveLearningRate = CONST.PLAYSTYLE_TECHNICAL_LEARNING_RATE
+      else
+          profile.type = "Balanced"
+          profile.confidence = 0.5
+          profile.adaptiveLearningRate = CONST.PLAYSTYLE_BALANCED_LEARNING_RATE
+      end
+      
+      -- Detect reaction pattern based on action variability (only last N actions)
+      if #AI.OpponentModel.lastActions >= CONST.REACTION_PATTERN_MIN_HISTORY then
+          local uniqueActions = {}
+          local historyLength = #AI.OpponentModel.lastActions
+          local startIndex = math.max(1, historyLength - CONST.REACTION_PATTERN_MIN_HISTORY + 1)
+          
+          -- Only analyze the most recent REACTION_PATTERN_MIN_HISTORY actions
+          for i = startIndex, historyLength do
+              uniqueActions[AI.OpponentModel.lastActions[i]] = true
+          end
+          
+          local varietyCount = 0
+          for _ in pairs(uniqueActions) do
+              varietyCount += 1
+          end
+          
+          if varietyCount <= CONST.REACTION_PATTERN_PREDICTABLE_MAX then
+              profile.reactionPattern = "Predictable"
+          elseif varietyCount >= CONST.REACTION_PATTERN_RANDOM_MIN then
+              profile.reactionPattern = "Random"
+          elseif AI.LSTMOpponentModel.sequenceLength >= CONST.REACTION_PATTERN_ADAPTIVE_MIN_SEQ and #AI.LSTMOpponentModel.patterns > CONST.REACTION_PATTERN_ADAPTIVE_MIN_PATTERNS then
+              profile.reactionPattern = "Adaptive"
+          else
+              profile.reactionPattern = "Normal"
+          end
+      end
+  end
+  
+  -- NEW: Context-aware health-based strategy switching
+  function AI.Learning.UpdateHealthStrategy(state)
+      local thresholds = AI.MetaLearning.healthStrategyThresholds
+      
+      -- Determine strategy based on health situation
+      if state.targetHealthPercent < thresholds.finisher then
+          AI.MetaLearning.currentHealthStrategy = "Finisher"
+      elseif state.myHealthPercent < thresholds.defensive then
+          AI.MetaLearning.currentHealthStrategy = "Defensive"
+      elseif state.targetHealthPercent < thresholds.aggressive and state.myHealthPercent > CONST.HEALTH_STRATEGY_BALANCED_THRESHOLD then
+          AI.MetaLearning.currentHealthStrategy = "Aggressive"
+      else
+          AI.MetaLearning.currentHealthStrategy = "Balanced"
       end
   end
   
@@ -4625,6 +4820,14 @@ local function initializeCombatSystem(character)
           return AI.State.currentTactic
       end
 
+      -- NEW: Context-aware health-based strategy switching
+      AI.Learning.UpdateHealthStrategy(state)
+      
+      -- Apply playstyle-based learning rate adjustment
+      if AI.OpponentModel.playstyleProfile and AI.OpponentModel.playstyleProfile.adaptiveLearningRate then
+          AI.MetaLearning.adaptiveLearningRate = AI.OpponentModel.playstyleProfile.adaptiveLearningRate
+      end
+
       -- Character-specific rule-based tactic selection with profile weighting
       local newTactic
       local baseScores = {
@@ -4647,6 +4850,37 @@ local function initializeCombatSystem(character)
       end
       -- BaitAndPunish is always a fallback option
       baseScores.BaitAndPunish = 50
+      
+      -- NEW: Apply health-based strategy adjustments
+      local healthStrategy = AI.MetaLearning.currentHealthStrategy
+      if healthStrategy == "Finisher" then
+          baseScores.Finisher *= CONST.TACTIC_SCORE_FINISHER_BOOST
+          baseScores.Aggressive *= CONST.TACTIC_SCORE_FINISHER_AGGRESSIVE_BOOST
+      elseif healthStrategy == "Aggressive" then
+          baseScores.Aggressive *= CONST.TACTIC_SCORE_AGGRESSIVE_BOOST
+          baseScores.BaitAndPunish *= CONST.TACTIC_SCORE_AGGRESSIVE_BAIT_BOOST
+      elseif healthStrategy == "Defensive" then
+          baseScores.Defensive *= CONST.TACTIC_SCORE_DEFENSIVE_BOOST
+          baseScores.BaitAndPunish *= CONST.TACTIC_SCORE_DEFENSIVE_BAIT_BOOST
+      end
+      
+      -- NEW: Apply playstyle-based adjustments
+      local playstyle = AI.OpponentModel.playstyleProfile
+      if playstyle and playstyle.confidence > CONST.PLAYSTYLE_CONFIDENCE_THRESHOLD then
+          if playstyle.type == "Aggressive" then
+              -- Counter aggressive with defensive/counter tactics
+              baseScores.Defensive *= CONST.TACTIC_SCORE_COUNTER_AGGRESSIVE
+              baseScores.BaitAndPunish *= CONST.TACTIC_SCORE_COUNTER_AGGRESSIVE_BAIT
+          elseif playstyle.type == "Defensive" then
+              -- Break defensive with aggressive pressure
+              baseScores.Aggressive *= CONST.TACTIC_SCORE_COUNTER_DEFENSIVE
+              baseScores.Finisher *= CONST.TACTIC_SCORE_COUNTER_DEFENSIVE_FINISHER
+          elseif playstyle.type == "Technical" then
+              -- Counter technical with straightforward aggression
+              baseScores.Aggressive *= CONST.TACTIC_SCORE_COUNTER_TECHNICAL
+              baseScores.Counter *= CONST.TACTIC_SCORE_COUNTER_TECHNICAL_COUNTER
+          end
+      end
       
       -- Apply character-specific weights if profile exists
       if characterInfo.TacticWeights then
