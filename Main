@@ -1394,6 +1394,14 @@ local AI = {
           confidence = 0.5, -- 0-1, confidence in classification
           adaptiveLearningRate = 0.55, -- Per-opponent learning rate
           reactionPattern = "Normal", -- "Predictable", "Random", "Adaptive", "Normal"
+          archetype = "Balanced", -- "Spammer", "Turtle", "Runner", "Balanced"
+          archetypeConfidence = 0.0,
+          archetypePriorsApplied = false,
+      },
+      archetypeWeights = {
+          Spammer = { EVADE = 1.55, BLOCK = 1.35, DASH = 1.25, ATTACK = 0.95 },
+          Turtle = { FEINT = 1.45, SPECIAL = 1.20, ATTACK = 1.10, BLOCK = 0.90 },
+          Runner = { DASH = 1.50, REPOSITION = 1.35, SPECIAL = 1.20, ATTACK = 1.05 },
       },
       -- Per-character adaptive parameters
       characterSpecificData = {}, -- Format: ["Saitama"] = { learningRateModifier = 1.0, comboEffectiveness = {} }
@@ -1500,8 +1508,27 @@ local AI = {
       estimatedDashCooldown = 2.0, -- Estimated opponent dash CD
       estimatedEscapeCooldown = 5.0, -- Estimated opponent escape CD
       estimatedSpecialCooldown = 3.0, -- Estimated opponent special CD
+      dynamicCooldowns = { DASH = 2.0, ESCAPE = 5.0, SPECIAL = 3.0 },
+      lastSeenUsageTime = { DASH = 0, ESCAPE = 0, SPECIAL = 0 },
+      usageIntervals = { DASH = {}, ESCAPE = {}, SPECIAL = {} },
+      cooldownLearningRate = 0.28,
       aggressionBoostMultiplier = 3.0, -- Boost when opponent out of resources
       isOpponentVulnerable = false, -- No escapes available
+  },
+  --// OPPONENT ENERGY PREDICTION: Estimate hidden meter and ultimate readiness
+  EnergyPrediction = {
+      estimatedOpponentEnergy = 0.35, -- 0-1 normalized estimate
+      estimatedUltimateReadiness = 0.0, -- 0-1 normalized confidence
+      opponentHitsLanded = 0,
+      opponentHitsTaken = 0,
+      lastUpdateTime = 0,
+      perHitGainLanded = 0.08,
+      perHitGainTaken = 0.06,
+      passiveGainRate = 0.012,
+      specialCost = 0.14,
+      dashCost = 0.05,
+      escapeCost = 0.10,
+      ultimateReadyThreshold = 0.88,
   },
   --// ZONE ADAPTATION: Learn optimal spacing
   ZoneAdaptation = {
@@ -1513,10 +1540,24 @@ local AI = {
       cornerDamageMultiplier = 1.0, -- Learn if corners are good/bad
       openFieldDamageMultiplier = 1.0,
   },
+  --// SPATIAL AWARENESS: Detect corners/walls with raycasts for zone tactics
+  SpatialAwareness = {
+      enabled = true,
+      scanInterval = 0.12,
+      lastScanTime = 0,
+      wallCheckDistance = 14,
+      cornerBlockedDirectionsThreshold = 2,
+      isOpponentCornered = false,
+      isSelfCornered = false,
+  },
   --// MOMENTUM-BASED ADAPTATION: Freeze learning during hot streaks
   MomentumAdaptation = {
       enabled = true,
       hotStateThreshold = 4, -- consecutiveHits > 4 = hot state
+      minHotStateThreshold = 2,
+      maxHotStateThreshold = 6,
+      thresholdAdjustmentWindow = 14,
+      thresholdPerformanceHistory = {},
       isInHotState = false,
       frozenFeatureWeights = nil, -- Snapshot of weights during hot state
       hotStateStartTime = 0,
@@ -1684,6 +1725,7 @@ local AI = {
       -- Thresholds for tactic switching
       defensiveThreshold = 0.4, -- < 0.4 = switch to Defensive/Turtle
       aggressiveThreshold = 0.8, -- > 0.8 = switch to Aggressive/Finisher
+      exploitThreshold = 0.1, -- < 0.1 = force ExploitSeeker desperation mode
       -- Performance tracking
       predictionAccuracy = 0,
       totalPredictions = 0,
@@ -2452,6 +2494,8 @@ local function initializeCombatSystem(character)
       TACTIC_CONFIDENCE_THRESHOLD = 50, TACTIC_CHANGE_COOLDOWN = 1.5, -- Reduced for faster adaptation
       EXPLOIT_SEEKER_CONFIDENCE_THRESHOLD = 20,
       EXPLOIT_SEEKER_COOLDOWN = 12.0, -- Reduced cooldown
+      EXPLOIT_MODE_MIN_CONFIDENCE = 5,
+      EXPLOIT_MODE_CONFIDENCE_DECAY = 0.5,
       REWARD_ANOMALOUS_DAMAGE = 60, -- Increased to encourage glitch exploitation
       GLITCH_VELOCITY_THRESHOLD = 350,
       GLITCH_DETECTION_REWARD = 20, -- Increased glitch detection reward
@@ -2500,6 +2544,11 @@ local function initializeCombatSystem(character)
       PLAYSTYLE_DEFENSIVE_LEARNING_RATE = 0.50, -- Learning rate vs defensive opponents
       PLAYSTYLE_TECHNICAL_LEARNING_RATE = 0.65, -- Learning rate vs technical opponents
       PLAYSTYLE_BALANCED_LEARNING_RATE = 0.55, -- Default learning rate vs balanced opponents
+      ARCHETYPE_EARLY_WINDOW = 10.0, -- First 10s of match for quick archetype loading
+      ARCHETYPE_MIN_ACTIONS = 6, -- Minimum observations for archetype clustering
+      ARCHETYPE_SPAMMER_ATTACK_THRESHOLD = 0.62,
+      ARCHETYPE_TURTLE_DEFENSE_THRESHOLD = 0.52,
+      ARCHETYPE_RUNNER_MOVEMENT_THRESHOLD = 0.48,
       REACTION_PATTERN_MIN_HISTORY = 10, -- Minimum action history for pattern detection
       REACTION_PATTERN_PREDICTABLE_MAX = 2, -- ≤2 unique actions = predictable
       REACTION_PATTERN_RANDOM_MIN = 5, -- ≥5 unique actions = random
@@ -2521,6 +2570,11 @@ local function initializeCombatSystem(character)
       TACTIC_SCORE_COUNTER_DEFENSIVE_FINISHER = 1.2, -- Finisher boost vs defensive opponent
       TACTIC_SCORE_COUNTER_TECHNICAL = 1.2, -- Aggressive boost vs technical opponent
       TACTIC_SCORE_COUNTER_TECHNICAL_COUNTER = 1.3, -- Counter boost vs technical opponent
+      MOMENTUM_THRESHOLD_REWARD_UP = 14,
+      MOMENTUM_THRESHOLD_REWARD_DOWN = -9,
+      COOLDOWN_INTERVAL_HISTORY_SIZE = 8,
+      COOLDOWN_VARIANCE_MULTIPLIER = 0.08,
+      COOLDOWN_MAX_UNCERTAINTY = 0.35,
   }
 
   --// --- STATE MANAGEMENT ---
@@ -2580,7 +2634,16 @@ local function initializeCombatSystem(character)
           -- Win Probability tracking
           matchStartTime = os.clock(),
           lastWinProbability = 0.5,
+          opponentEnergyEstimate = 0.35,
+          opponentUltimateReady = false,
       }
+      AI.EnergyPrediction.lastUpdateTime = os.clock()
+      AI.EnergyPrediction.estimatedOpponentEnergy = 0.35
+      AI.EnergyPrediction.estimatedUltimateReadiness = 0.0
+      AI.EnergyPrediction.opponentHitsLanded = 0
+      AI.EnergyPrediction.opponentHitsTaken = 0
+      AI.SpatialAwareness.isOpponentCornered = false
+      AI.SpatialAwareness.isSelfCornered = false
       print("AI State reset. Learned statistics and score have been preserved.")
   end
   AI.ResetState(CONST.MAX_ENERGY)
@@ -3123,6 +3186,17 @@ local function initializeCombatSystem(character)
       local lastDash = AI.State.lastDashDirection or "W"
       if dashScores[lastDash] then
           dashScores[lastDash] *= 0.7 -- Reduce score for repeated direction
+      end
+
+      -- Spatial awareness overrides (corner / wall logic)
+      if state.isSelfCornered then
+          dashScores.S *= 0.55 -- Avoid retreating into wall
+          dashScores.A *= 1.35
+          dashScores.D *= 1.35
+          dashScores.W *= 1.20
+      elseif state.isOpponentCornered then
+          dashScores.W *= 1.45 -- Keep pressure when enemy is pinned
+          dashScores.S *= 0.75
       end
       
       -- Find best direction
@@ -4265,17 +4339,60 @@ local function initializeCombatSystem(character)
               varietyCount += 1
           end
           
-          if varietyCount <= CONST.REACTION_PATTERN_PREDICTABLE_MAX then
-              profile.reactionPattern = "Predictable"
-          elseif varietyCount >= CONST.REACTION_PATTERN_RANDOM_MIN then
-              profile.reactionPattern = "Random"
-          elseif AI.LSTMOpponentModel.sequenceLength >= CONST.REACTION_PATTERN_ADAPTIVE_MIN_SEQ and #AI.LSTMOpponentModel.patterns > CONST.REACTION_PATTERN_ADAPTIVE_MIN_PATTERNS then
-              profile.reactionPattern = "Adaptive"
-          else
-              profile.reactionPattern = "Normal"
-          end
-      end
-  end
+           if varietyCount <= CONST.REACTION_PATTERN_PREDICTABLE_MAX then
+               profile.reactionPattern = "Predictable"
+           elseif varietyCount >= CONST.REACTION_PATTERN_RANDOM_MIN then
+               profile.reactionPattern = "Random"
+           elseif AI.LSTMOpponentModel.sequenceLength >= CONST.REACTION_PATTERN_ADAPTIVE_MIN_SEQ and #AI.LSTMOpponentModel.patterns > CONST.REACTION_PATTERN_ADAPTIVE_MIN_PATTERNS then
+               profile.reactionPattern = "Adaptive"
+           else
+               profile.reactionPattern = "Normal"
+           end
+       end
+
+       -- Early archetype clustering with pre-trained counter priors
+       AI.Learning.UpdateOpponentArchetype(totalActions, attackPercent, defensePercent, movementPercent)
+   end
+
+   function AI.Learning.UpdateOpponentArchetype(totalActions, attackPercent, defensePercent, movementPercent)
+       local profile = AI.OpponentModel.playstyleProfile
+       if totalActions < CONST.ARCHETYPE_MIN_ACTIONS then return end
+
+       if not AI.State.matchStartTime then
+           AI.State.matchStartTime = os.clock()
+       end
+       local elapsed = os.clock() - AI.State.matchStartTime
+       if elapsed > CONST.ARCHETYPE_EARLY_WINDOW and profile.archetypePriorsApplied then
+           return
+       end
+
+       local archetype = "Balanced"
+       local confidence = 0.5
+       if attackPercent >= CONST.ARCHETYPE_SPAMMER_ATTACK_THRESHOLD then
+           archetype = "Spammer"
+           confidence = attackPercent
+       elseif defensePercent >= CONST.ARCHETYPE_TURTLE_DEFENSE_THRESHOLD then
+           archetype = "Turtle"
+           confidence = defensePercent
+       elseif movementPercent >= CONST.ARCHETYPE_RUNNER_MOVEMENT_THRESHOLD then
+           archetype = "Runner"
+           confidence = movementPercent
+       end
+
+       profile.archetype = archetype
+       profile.archetypeConfidence = confidence
+
+       if elapsed <= CONST.ARCHETYPE_EARLY_WINDOW and confidence >= 0.55 then
+           local priors = AI.OpponentModel.archetypeWeights[archetype]
+           if priors then
+               for action, mult in pairs(priors) do
+                   AI.OpponentBehaviorModel.reactionWeights[action] = (AI.OpponentBehaviorModel.reactionWeights[action] or 1.0) * mult
+               end
+               profile.archetypePriorsApplied = true
+               print(`🧠 Archetype detected early: {archetype} ({string.format("%.0f", confidence * 100)}%). Loaded priors.`)
+           end
+       end
+   end
   
   -- NEW: Context-aware health-based strategy switching
   function AI.Learning.UpdateHealthStrategy(state)
@@ -4686,6 +4803,102 @@ local function initializeCombatSystem(character)
       end
   end
   
+  function AI.Learning.UpdateOpponentEnergyPrediction(eventType, contextValue)
+      local pred = AI.EnergyPrediction
+      local now = os.clock()
+      local deltaTime = math.max(0, now - (pred.lastUpdateTime or now))
+      pred.lastUpdateTime = now
+
+      -- Passive regeneration / meter gain over time (only on tick updates)
+      if eventType == "TICK" or eventType == nil then
+          pred.estimatedOpponentEnergy = math.clamp(pred.estimatedOpponentEnergy + pred.passiveGainRate * deltaTime, 0, 1)
+      end
+
+      if eventType == "OPPONENT_LANDED_HIT" then
+          pred.opponentHitsLanded += 1
+          pred.estimatedOpponentEnergy = math.clamp(pred.estimatedOpponentEnergy + pred.perHitGainLanded, 0, 1)
+      elseif eventType == "OPPONENT_TAKEN_HIT" then
+          pred.opponentHitsTaken += 1
+          pred.estimatedOpponentEnergy = math.clamp(pred.estimatedOpponentEnergy + pred.perHitGainTaken, 0, 1)
+      elseif eventType == "RESOURCE_USED" then
+          if contextValue == "SPECIAL" then
+              pred.estimatedOpponentEnergy = math.max(0, pred.estimatedOpponentEnergy - pred.specialCost)
+          elseif contextValue == "DASH" then
+              pred.estimatedOpponentEnergy = math.max(0, pred.estimatedOpponentEnergy - pred.dashCost)
+          elseif contextValue == "ESCAPE" then
+              pred.estimatedOpponentEnergy = math.max(0, pred.estimatedOpponentEnergy - pred.escapeCost)
+          elseif contextValue == "ULTIMATE" then
+              pred.estimatedOpponentEnergy = 0
+              pred.estimatedUltimateReadiness = 0
+          end
+      end
+
+      local readinessFromEnergy = pred.estimatedOpponentEnergy
+      local readinessFromHits = math.min(1, (pred.opponentHitsLanded * 0.07) + (pred.opponentHitsTaken * 0.05))
+      pred.estimatedUltimateReadiness = math.clamp(readinessFromEnergy * 0.65 + readinessFromHits * 0.35, 0, 1)
+  end
+
+  function AI.Learning.UpdateSpatialAwareness()
+      local spatial = AI.SpatialAwareness
+      if not spatial.enabled or not rootPart then return end
+
+      local now = os.clock()
+      if now - spatial.lastScanTime < spatial.scanInterval then return end
+      spatial.lastScanTime = now
+
+      local raycastParams = RaycastParams.new()
+      raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+      local filterList = {character}
+      if AI.State.currentTarget then table.insert(filterList, AI.State.currentTarget) end
+      raycastParams.FilterDescendantsInstances = filterList
+
+      local function CountBlockedDirections(originPart)
+          if not originPart then return 0 end
+          local blocked = 0
+          local origin = originPart.Position
+          local dirs = {
+              originPart.CFrame.LookVector,
+              -originPart.CFrame.LookVector,
+              originPart.CFrame.RightVector,
+              -originPart.CFrame.RightVector,
+          }
+          for _, dir in ipairs(dirs) do
+              local hit = workspace:Raycast(origin, dir * spatial.wallCheckDistance, raycastParams)
+              if hit then
+                  blocked += 1
+              end
+          end
+          return blocked
+      end
+
+      local selfBlocked = CountBlockedDirections(rootPart)
+      local targetBlocked = CountBlockedDirections(AI.State.targetTorso)
+      spatial.isSelfCornered = selfBlocked >= spatial.cornerBlockedDirectionsThreshold
+      spatial.isOpponentCornered = targetBlocked >= spatial.cornerBlockedDirectionsThreshold
+  end
+
+  function AI.Learning.AdjustMomentumThreshold(recentReward)
+      local momentum = AI.MomentumAdaptation
+      if not momentum.enabled then return end
+
+      table.insert(momentum.thresholdPerformanceHistory, recentReward)
+      if #momentum.thresholdPerformanceHistory > momentum.thresholdAdjustmentWindow then
+          table.remove(momentum.thresholdPerformanceHistory, 1)
+      end
+      if #momentum.thresholdPerformanceHistory < momentum.thresholdAdjustmentWindow then return end
+
+      local total = 0
+      for _, value in ipairs(momentum.thresholdPerformanceHistory) do
+          total += value
+      end
+      local avgReward = total / #momentum.thresholdPerformanceHistory
+      if avgReward >= CONST.MOMENTUM_THRESHOLD_REWARD_UP then
+          momentum.hotStateThreshold = math.max(momentum.minHotStateThreshold, momentum.hotStateThreshold - 1)
+      elseif avgReward <= CONST.MOMENTUM_THRESHOLD_REWARD_DOWN then
+          momentum.hotStateThreshold = math.min(momentum.maxHotStateThreshold, momentum.hotStateThreshold + 1)
+      end
+  end
+
   -- Track opponent resource usage
   function AI.Learning.TrackOpponentResource(resourceType)
       local res = AI.ResourceAwareness
@@ -4697,6 +4910,42 @@ local function initializeCombatSystem(character)
           res.opponentLastEscape = now
       elseif resourceType == "SPECIAL" then
           res.opponentLastSpecial = now
+      end
+
+      if res.lastSeenUsageTime[resourceType] and res.lastSeenUsageTime[resourceType] > 0 then
+          local observedInterval = now - res.lastSeenUsageTime[resourceType]
+          if observedInterval > 0.05 then
+              local intervalHistory = res.usageIntervals[resourceType]
+              table.insert(intervalHistory, observedInterval)
+              if #intervalHistory > CONST.COOLDOWN_INTERVAL_HISTORY_SIZE then
+                  table.remove(intervalHistory, 1)
+              end
+
+              local mean = 0
+              for _, val in ipairs(intervalHistory) do
+                  mean += val
+              end
+              mean = mean / #intervalHistory
+
+              local variance = 0
+              for _, val in ipairs(intervalHistory) do
+                  variance += (val - mean) * (val - mean)
+              end
+              variance = variance / #intervalHistory
+              local uncertaintyBoost = math.clamp(variance * CONST.COOLDOWN_VARIANCE_MULTIPLIER, 0, CONST.COOLDOWN_MAX_UNCERTAINTY)
+              local prevEstimate = res.dynamicCooldowns[resourceType]
+              local targetEstimate = math.max(0.2, mean * (1 + uncertaintyBoost))
+              local updated = prevEstimate + (targetEstimate - prevEstimate) * res.cooldownLearningRate
+              res.dynamicCooldowns[resourceType] = updated
+          end
+      end
+      res.lastSeenUsageTime[resourceType] = now
+
+      res.estimatedDashCooldown = res.dynamicCooldowns.DASH
+      res.estimatedEscapeCooldown = res.dynamicCooldowns.ESCAPE
+      res.estimatedSpecialCooldown = res.dynamicCooldowns.SPECIAL
+      if resourceType == "DASH" or resourceType == "ESCAPE" or resourceType == "SPECIAL" then
+          AI.Learning.UpdateOpponentEnergyPrediction("RESOURCE_USED", resourceType)
       end
       
       -- Check if opponent is vulnerable (no escape available)
@@ -4782,6 +5031,15 @@ local function initializeCombatSystem(character)
           
           -- Store prediction for debugging
           AI.State.lastWinProbability = winProb
+
+          if winProb < AI.WinProbabilityEstimator.exploitThreshold then
+              if AI.State.currentTactic ~= "ExploitSeeker" then
+                  AI.State.lastTacticChangeTime = now
+                  AI.State.tacticConfidence = math.max(CONST.EXPLOIT_MODE_MIN_CONFIDENCE, AI.State.tacticConfidence * CONST.EXPLOIT_MODE_CONFIDENCE_DECAY)
+                  print(string.format("🎲 Win Probability %.2f < %.2f - Switching to EXPLOITSEEKER mode", winProb, AI.WinProbabilityEstimator.exploitThreshold))
+              end
+              return "ExploitSeeker"
+          end
           
           -- Dynamic tactic switching based on win probability
           if winProb < AI.WinProbabilityEstimator.defensiveThreshold then
@@ -4805,6 +5063,12 @@ local function initializeCombatSystem(character)
           
           -- Record match snapshot for training
           AI.DeepLearning.RecordMatchSnapshot(state)
+      end
+
+      if state.isSelfCornered then
+          return "Defensive"
+      elseif state.isOpponentCornered and state.distance <= CONST.ATTACK_RANGE * 1.4 then
+          return "Aggressive"
       end
 
       -- If confidence is critical, switch to experimental mode.
@@ -4915,6 +5179,18 @@ local function initializeCombatSystem(character)
       -- Immediate capitalization windows (glitch or punish) - highest priority
       local function isCapitalizeWindow()
           return now < AI.State.glitchComboWindowEndTime or now < AI.State.punishWindowEndTime
+      end
+
+      -- Opponent ultimate prediction override: force evasive responses immediately
+      if state.opponentUltimateReady and state.distance < CONST.ATTACK_RANGE * 1.8 then
+          if (now - AI.State.lastActionTimes.DASH > CONST.DASH_COOLDOWN) and state.energy >= CONST.COSTS.DASH then
+              return "DASH"
+          elseif (now - AI.State.lastActionTimes.EVADE > CONST.DASH_COOLDOWN) and state.energy >= CONST.COSTS.DASH then
+              return "EVADE"
+          elseif (now - AI.State.lastActionTimes.BLOCK > CONST.BLOCK_COOLDOWN) and state.energy >= CONST.COSTS.BLOCK and not AI.State.isBlocking then
+              return "BLOCK"
+          end
+          return "REPOSITION"
       end
 
       if isCapitalizeWindow() and state.inRange then
@@ -6183,6 +6459,9 @@ local function initializeCombatSystem(character)
           AI.State.isTargetAttacking = false
       end
 
+      AI.Learning.UpdateOpponentEnergyPrediction("TICK")
+      AI.Learning.UpdateSpatialAwareness()
+
       RunGlitchScanner() -- Run the scanner every state update.
       
       -- Periodically save character model (every 100 trials)
@@ -6314,6 +6593,7 @@ local function initializeCombatSystem(character)
       end
       local damageDealt = AI.State.lastTargetHealth - currentTargetHealth
       if damageDealt > 0 then
+          AI.Learning.UpdateOpponentEnergyPrediction("OPPONENT_TAKEN_HIT", damageDealt)
           -- Track when damage was dealt
           AI.State.lastDamageDealtTime = now
           
@@ -6410,6 +6690,7 @@ local function initializeCombatSystem(character)
           
           -- Reinforce with next state for deep learning
           AI.Learning.Reinforce(tactic, action, reward, nextState)
+          AI.Learning.AdjustMomentumThreshold(reward)
 
           -- Extend combo window
           AI.State.comboStateEndTime = now + CONST.COMBO_WINDOW_DURATION
@@ -6567,7 +6848,13 @@ local function initializeCombatSystem(character)
           energy = AI.State.currentEnergy,
           inRange = distance <= CONST.ATTACK_RANGE,
           isTargetAttacking = AI.State.isTargetAttacking,
+          opponentEnergyEstimate = AI.EnergyPrediction.estimatedOpponentEnergy,
+          opponentUltimateReady = AI.EnergyPrediction.estimatedUltimateReadiness >= AI.EnergyPrediction.ultimateReadyThreshold,
+          isOpponentCornered = AI.SpatialAwareness.isOpponentCornered,
+          isSelfCornered = AI.SpatialAwareness.isSelfCornered,
       }
+      AI.State.opponentEnergyEstimate = state.opponentEnergyEstimate
+      AI.State.opponentUltimateReady = state.opponentUltimateReady
       
       -- Check target ragdoll/stunned state (for ultimate timing)
       if AI.State.targetHumanoid then
@@ -6580,7 +6867,7 @@ local function initializeCombatSystem(character)
                                       AI.State.targetTorso.AssemblyLinearVelocity.Magnitude < 5 and
                                       not AI.State.isTargetAttacking)
       end
-      
+
       -- Priority: Auto-Awakening Logic (if not already awakened)
       if not AI.State.isAwakened and not AI.State.awakenAttempted then
           local shouldAwaken = false
@@ -6786,6 +7073,7 @@ local function initializeCombatSystem(character)
       end
       
       if damageTaken > 0 then
+          AI.Learning.UpdateOpponentEnergyPrediction("OPPONENT_LANDED_HIT", damageTaken)
           local penalty = damageTaken * CONST.PENALTY_DAMAGE_TAKEN_MULTIPLIER
           local failedAction = AI.State.lastAction
           
@@ -6818,6 +7106,7 @@ local function initializeCombatSystem(character)
           else
               AI.Learning.Reinforce(AI.State.currentTactic, failedAction, penalty, currentState)
           end
+          AI.Learning.AdjustMomentumThreshold(penalty)
           AI.State.isPerfectDodging = false
           
           -- Track negative performance
