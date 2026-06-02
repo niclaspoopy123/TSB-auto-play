@@ -2586,6 +2586,10 @@ local function initializeCombatSystem(character)
       CLONE_MOVE_SPEED = 20, -- Clone movement speed multiplier
       CLONE_DASH_DISTANCE = 12, -- Distance covered by a dash
       CLONE_EVADE_DISTANCE = 10, -- Distance covered by an evade
+      CLONE_COMBO_DAMAGE_MULTIPLIER = 0.1, -- Extra damage per combo hit for specials
+      CLONE_QVALUE_WEIGHT = 0.7, -- Weight for Q-value in action scoring
+      CLONE_WINRATE_WEIGHT = 0.3, -- Weight for win rate in action scoring
+      CLONE_EXPLORATION_VARIANCE = 0.1, -- Randomness factor for action exploration
       -- Awakening/Ultimate constants
       AUTO_AWAKEN_HP_THRESHOLD = 0.30, -- Auto-awaken when HP < 30%
       AWAKEN_COOLDOWN = 5.0, -- Cooldown between awaken attempts
@@ -6179,7 +6183,7 @@ local function initializeCombatSystem(character)
                           local targetHum = hitChar:FindFirstChildOfClass("Humanoid")
                           if targetHum and targetHum.Health > 0 then
                               if not AI.State.isBlocking then
-                                  local comboDmg = CONST.CLONE_SPECIAL_DAMAGE * (1 + cloneState.comboCount * 0.1)
+                                  local comboDmg = CONST.CLONE_SPECIAL_DAMAGE * (1 + cloneState.comboCount * CONST.CLONE_COMBO_DAMAGE_MULTIPLIER)
                                   targetHum:TakeDamage(comboDmg)
                                   cloneState.consecutiveHits += 1
                                   cloneState.comboCount += 1
@@ -6302,7 +6306,7 @@ local function initializeCombatSystem(character)
                           local qValue = actionData.qValue or 0
                           local winRate = (actionData.trials and actionData.trials > 0) 
                               and (actionData.wins or 0) / actionData.trials or 0.5
-                          local score = qValue * 0.7 + winRate * 0.3
+                          local score = qValue * CONST.CLONE_QVALUE_WEIGHT + winRate * CONST.CLONE_WINRATE_WEIGHT
                           
                           -- Context bonuses
                           if state.isTargetAttacking and (action == "EVADE" or action == "BLOCK") then
@@ -6316,7 +6320,7 @@ local function initializeCombatSystem(character)
                           end
                           
                           -- Small randomness for exploration
-                          score += (math.random() - 0.5) * 0.1
+                          score += (math.random() - 0.5) * CONST.CLONE_EXPLORATION_VARIANCE
                           
                           if score > bestScore then
                               bestScore = score
@@ -6421,7 +6425,7 @@ local function initializeCombatSystem(character)
           local lookTarget = Vector3.new(targetPos.X, cloneRootPart.Position.Y, targetPos.Z)
           local currentCF = cloneRootPart.CFrame
           local desiredCF = CFrame.lookAt(cloneRootPart.Position, lookTarget)
-          -- Smooth rotation (lerp 30% per frame for natural-looking turning)
+          -- Smooth rotation (lerp factor 0.3 for natural-looking turning)
           cloneRootPart.CFrame = currentCF:Lerp(desiredCF, 0.3)
           
           -- Build state
