@@ -969,7 +969,17 @@ local function CreateTrainingGUI(char, rp)
         hrp.Position = rp.Position + Vector3.new(10, 0, 10)
         hrp.Anchored = false
         hrp.CanCollide = true
+        hrp.Transparency = 1
         hrp.Parent = clone
+        
+        local torso = Instance.new("Part")
+        torso.Name = "Torso"
+        torso.Size = Vector3.new(2, 2, 1)
+        torso.Position = hrp.Position
+        torso.Anchored = false
+        torso.CanCollide = true
+        torso.BrickColor = BrickColor.new("Bright red")
+        torso.Parent = clone
         
         local head = Instance.new("Part")
         head.Name = "Head"
@@ -977,17 +987,68 @@ local function CreateTrainingGUI(char, rp)
         head.Position = hrp.Position + Vector3.new(0, 1.5, 0)
         head.Anchored = false
         head.CanCollide = true
+        head.BrickColor = BrickColor.new("Bright yellow")
         head.Parent = clone
+        
+        local leftArm = Instance.new("Part")
+        leftArm.Name = "Left Arm"
+        leftArm.Size = Vector3.new(1, 2, 1)
+        leftArm.Position = hrp.Position + Vector3.new(-1.5, 0, 0)
+        leftArm.Anchored = false
+        leftArm.CanCollide = false
+        leftArm.BrickColor = BrickColor.new("Bright yellow")
+        leftArm.Parent = clone
+        
+        local rightArm = Instance.new("Part")
+        rightArm.Name = "Right Arm"
+        rightArm.Size = Vector3.new(1, 2, 1)
+        rightArm.Position = hrp.Position + Vector3.new(1.5, 0, 0)
+        rightArm.Anchored = false
+        rightArm.CanCollide = false
+        rightArm.BrickColor = BrickColor.new("Bright yellow")
+        rightArm.Parent = clone
+        
+        local leftLeg = Instance.new("Part")
+        leftLeg.Name = "Left Leg"
+        leftLeg.Size = Vector3.new(1, 2, 1)
+        leftLeg.Position = hrp.Position + Vector3.new(-0.5, -2, 0)
+        leftLeg.Anchored = false
+        leftLeg.CanCollide = false
+        leftLeg.BrickColor = BrickColor.new("Dark blue")
+        leftLeg.Parent = clone
+        
+        local rightLeg = Instance.new("Part")
+        rightLeg.Name = "Right Leg"
+        rightLeg.Size = Vector3.new(1, 2, 1)
+        rightLeg.Position = hrp.Position + Vector3.new(0.5, -2, 0)
+        rightLeg.Anchored = false
+        rightLeg.CanCollide = false
+        rightLeg.BrickColor = BrickColor.new("Dark blue")
+        rightLeg.Parent = clone
         
         local humanoid = Instance.new("Humanoid")
         humanoid.MaxHealth = 100
         humanoid.Health = 100
+        humanoid.WalkSpeed = CONST.CLONE_MOVE_SPEED
         humanoid.Parent = clone
         
-        local weld = Instance.new("WeldConstraint")
-        weld.Part0 = hrp
-        weld.Part1 = head
-        weld.Parent = hrp
+        -- Weld all parts to HumanoidRootPart
+        local function weldPart(part, offset)
+            local weld = Instance.new("WeldConstraint")
+            weld.Part0 = hrp
+            weld.Part1 = part
+            weld.Parent = hrp
+            part.CFrame = hrp.CFrame * CFrame.new(offset)
+        end
+        
+        weldPart(torso, Vector3.new(0, 0, 0))
+        weldPart(head, Vector3.new(0, 1.5, 0))
+        weldPart(leftArm, Vector3.new(-1.5, 0, 0))
+        weldPart(rightArm, Vector3.new(1.5, 0, 0))
+        weldPart(leftLeg, Vector3.new(-0.5, -2, 0))
+        weldPart(rightLeg, Vector3.new(0.5, -2, 0))
+        
+        clone.PrimaryPart = hrp
         
         clone.Parent = Workspace
         TrainingMode.cloneCharacter = clone
@@ -2515,13 +2576,16 @@ local function initializeCombatSystem(character)
       DASH_AGGRESSIVE_MULTIPLIER = 1.8, -- Dash multiplier for aggressive tactics
       FEINT_AGGRESSIVE_MULTIPLIER = 2.0, -- Feint multiplier vs aggressive opponents
       -- Clone AI constants
-      CLONE_ATTACK_DAMAGE_MIN = 5,
-      CLONE_ATTACK_DAMAGE_MAX = 10,
-      CLONE_SPECIAL_DAMAGE_MIN = 12,
-      CLONE_SPECIAL_DAMAGE_MAX = 20,
       CLONE_ATTACK_PROBABILITY = 0.6, -- 60% chance to use attack when in range
       CLONE_SPECIAL_PROBABILITY = 0.3, -- 30% chance to use special when in range
       CLONE_ATTACK_WINDOW = 0.5, -- Time window to keep attack flag after tool is disabled
+      CLONE_HITBOX_SIZE = Vector3.new(4, 5, 4), -- Hitbox size for clone melee attacks
+      CLONE_SPECIAL_HITBOX_SIZE = Vector3.new(6, 5, 6), -- Larger hitbox for special attacks
+      CLONE_ATTACK_DAMAGE = 8, -- Base attack damage
+      CLONE_SPECIAL_DAMAGE = 16, -- Base special damage
+      CLONE_MOVE_SPEED = 20, -- Clone movement speed multiplier
+      CLONE_DASH_DISTANCE = 12, -- Distance covered by a dash
+      CLONE_EVADE_DISTANCE = 10, -- Distance covered by an evade
       -- Awakening/Ultimate constants
       AUTO_AWAKEN_HP_THRESHOLD = 0.30, -- Auto-awaken when HP < 30%
       AWAKEN_COOLDOWN = 5.0, -- Cooldown between awaken attempts
@@ -5884,7 +5948,7 @@ local function initializeCombatSystem(character)
       end
       TrainingMode.cloneConnections = {}
       
-      -- Create clone character
+      -- Create clone character with proper R6-style body for real physics
       local clone = Instance.new("Model")
       clone.Name = "AI_Clone_Dummy"
       
@@ -5894,7 +5958,17 @@ local function initializeCombatSystem(character)
       hrp.Position = rootPart.Position + Vector3.new(10, 0, 10)
       hrp.Anchored = false
       hrp.CanCollide = true
+      hrp.Transparency = 1
       hrp.Parent = clone
+      
+      local torso = Instance.new("Part")
+      torso.Name = "Torso"
+      torso.Size = Vector3.new(2, 2, 1)
+      torso.Position = hrp.Position
+      torso.Anchored = false
+      torso.CanCollide = true
+      torso.BrickColor = BrickColor.new("Bright red")
+      torso.Parent = clone
       
       local head = Instance.new("Part")
       head.Name = "Head"
@@ -5902,18 +5976,70 @@ local function initializeCombatSystem(character)
       head.Position = hrp.Position + Vector3.new(0, 1.5, 0)
       head.Anchored = false
       head.CanCollide = true
+      head.BrickColor = BrickColor.new("Bright yellow")
       head.Parent = clone
+      
+      -- Add limbs for more realistic character shape
+      local leftArm = Instance.new("Part")
+      leftArm.Name = "Left Arm"
+      leftArm.Size = Vector3.new(1, 2, 1)
+      leftArm.Position = hrp.Position + Vector3.new(-1.5, 0, 0)
+      leftArm.Anchored = false
+      leftArm.CanCollide = false
+      leftArm.BrickColor = BrickColor.new("Bright yellow")
+      leftArm.Parent = clone
+      
+      local rightArm = Instance.new("Part")
+      rightArm.Name = "Right Arm"
+      rightArm.Size = Vector3.new(1, 2, 1)
+      rightArm.Position = hrp.Position + Vector3.new(1.5, 0, 0)
+      rightArm.Anchored = false
+      rightArm.CanCollide = false
+      rightArm.BrickColor = BrickColor.new("Bright yellow")
+      rightArm.Parent = clone
+      
+      local leftLeg = Instance.new("Part")
+      leftLeg.Name = "Left Leg"
+      leftLeg.Size = Vector3.new(1, 2, 1)
+      leftLeg.Position = hrp.Position + Vector3.new(-0.5, -2, 0)
+      leftLeg.Anchored = false
+      leftLeg.CanCollide = false
+      leftLeg.BrickColor = BrickColor.new("Dark blue")
+      leftLeg.Parent = clone
+      
+      local rightLeg = Instance.new("Part")
+      rightLeg.Name = "Right Leg"
+      rightLeg.Size = Vector3.new(1, 2, 1)
+      rightLeg.Position = hrp.Position + Vector3.new(0.5, -2, 0)
+      rightLeg.Anchored = false
+      rightLeg.CanCollide = false
+      rightLeg.BrickColor = BrickColor.new("Dark blue")
+      rightLeg.Parent = clone
       
       local humanoid = Instance.new("Humanoid")
       humanoid.MaxHealth = 100
       humanoid.Health = 100
+      humanoid.WalkSpeed = CONST.CLONE_MOVE_SPEED
       humanoid.Parent = clone
       
-      -- Weld parts together
-      local weld = Instance.new("WeldConstraint")
-      weld.Part0 = hrp
-      weld.Part1 = head
-      weld.Parent = hrp
+      -- Weld all parts to HumanoidRootPart
+      local function weldPart(part, offset)
+          local weld = Instance.new("WeldConstraint")
+          weld.Part0 = hrp
+          weld.Part1 = part
+          weld.Parent = hrp
+          part.CFrame = hrp.CFrame * CFrame.new(offset)
+      end
+      
+      weldPart(torso, Vector3.new(0, 0, 0))
+      weldPart(head, Vector3.new(0, 1.5, 0))
+      weldPart(leftArm, Vector3.new(-1.5, 0, 0))
+      weldPart(rightArm, Vector3.new(1.5, 0, 0))
+      weldPart(leftLeg, Vector3.new(-0.5, -2, 0))
+      weldPart(rightLeg, Vector3.new(0.5, -2, 0))
+      
+      -- Set PrimaryPart for proper Humanoid:MoveTo support
+      clone.PrimaryPart = hrp
       
       clone.Parent = Workspace
       TrainingMode.cloneCharacter = clone
@@ -5921,7 +6047,7 @@ local function initializeCombatSystem(character)
       -- Initialize Clone AI (mimics player's AI)
       InitializeCloneAI(clone, hrp, humanoid)
       
-      print("AI Clone created with AI brain for training")
+      print("AI Clone created with real combat AI for training")
       return clone
   end
   
@@ -5988,7 +6114,7 @@ local function initializeCombatSystem(character)
           end
       end
       
-      -- Clone's action execution (simulated - deals damage directly)
+      -- Clone's action execution (real physics-based combat)
       local function CloneExecuteAction(action, state)
           local now = os.clock()
           cloneState.lastAction = action
@@ -6000,31 +6126,90 @@ local function initializeCombatSystem(character)
           cloneState.currentEnergy -= cost
           
           if action == "ATTACK" then
-              -- Simulate attack with damage
+              -- Real hitbox-based attack using spatial query
               if state.inRange and humanoid and humanoid.Health > 0 then
-                  local damage = math.random(CONST.CLONE_ATTACK_DAMAGE_MIN, CONST.CLONE_ATTACK_DAMAGE_MAX)
-                  humanoid:TakeDamage(damage)
-                  cloneState.punishWindowEndTime = 0
+                  local attackOrigin = cloneRootPart.Position + cloneRootPart.CFrame.LookVector * 2
+                  local hitboxParams = OverlapParams.new()
+                  hitboxParams.FilterType = Enum.RaycastFilterType.Exclude
+                  hitboxParams.FilterDescendantsInstances = {clone}
+                  
+                  local hitParts = Workspace:GetPartBoundsInBox(
+                      CFrame.new(attackOrigin),
+                      CONST.CLONE_HITBOX_SIZE,
+                      hitboxParams
+                  )
+                  
+                  for _, part in ipairs(hitParts) do
+                      local hitChar = part.Parent
+                      if hitChar == character then
+                          local targetHum = hitChar:FindFirstChildOfClass("Humanoid")
+                          if targetHum and targetHum.Health > 0 then
+                              -- Apply damage only if not blocking
+                              if not AI.State.isBlocking then
+                                  targetHum:TakeDamage(CONST.CLONE_ATTACK_DAMAGE)
+                                  cloneState.consecutiveHits += 1
+                                  cloneState.comboCount += 1
+                                  cloneState.comboStateEndTime = now + CONST.COMBO_WINDOW_DURATION
+                                  cloneState.lastDamageDealtTime = now
+                              end
+                          end
+                          break
+                      end
+                  end
               end
               cloneState.lastActionTimes.ATTACK = now
+              cloneState.punishWindowEndTime = now + 0.3
           elseif action == "SPECIAL" then
-              -- Simulate special move with higher damage
+              -- Real hitbox-based special with larger area
               if state.inRange and humanoid and humanoid.Health > 0 then
-                  local damage = math.random(CONST.CLONE_SPECIAL_DAMAGE_MIN, CONST.CLONE_SPECIAL_DAMAGE_MAX)
-                  humanoid:TakeDamage(damage)
-                  cloneState.punishWindowEndTime = 0
+                  local attackOrigin = cloneRootPart.Position + cloneRootPart.CFrame.LookVector * 3
+                  local hitboxParams = OverlapParams.new()
+                  hitboxParams.FilterType = Enum.RaycastFilterType.Exclude
+                  hitboxParams.FilterDescendantsInstances = {clone}
+                  
+                  local hitParts = Workspace:GetPartBoundsInBox(
+                      CFrame.new(attackOrigin),
+                      CONST.CLONE_SPECIAL_HITBOX_SIZE,
+                      hitboxParams
+                  )
+                  
+                  for _, part in ipairs(hitParts) do
+                      local hitChar = part.Parent
+                      if hitChar == character then
+                          local targetHum = hitChar:FindFirstChildOfClass("Humanoid")
+                          if targetHum and targetHum.Health > 0 then
+                              if not AI.State.isBlocking then
+                                  local comboDmg = CONST.CLONE_SPECIAL_DAMAGE * (1 + cloneState.comboCount * 0.1)
+                                  targetHum:TakeDamage(comboDmg)
+                                  cloneState.consecutiveHits += 1
+                                  cloneState.comboCount += 1
+                                  cloneState.comboStateEndTime = now + CONST.COMBO_WINDOW_DURATION
+                                  cloneState.lastDamageDealtTime = now
+                              end
+                          end
+                          break
+                      end
+                  end
               end
               cloneState.lastActionTimes.SPECIAL = now
+              cloneState.punishWindowEndTime = now + 0.5
           elseif action == "EVADE" then
-              -- Simulate dodge by moving perpendicular
-              local perpendicular = cloneRootPart.CFrame.RightVector * (math.random() > 0.5 and 1 or -1)
-              local evadePos = cloneRootPart.Position + (perpendicular.Unit * 15)
-              cloneRootPart.CFrame = CFrame.new(evadePos)
+              -- Real physics-based dodge using Humanoid:MoveTo
+              local evadeDir
+              local targetVelocity = cloneState.targetTorso.AssemblyLinearVelocity
+              if targetVelocity and targetVelocity.Magnitude > 10 then
+                  local targetDir = targetVelocity.Unit
+                  evadeDir = Vector3.new(-targetDir.Z, 0, targetDir.X) * (math.random() > 0.5 and 1 or -1)
+              else
+                  evadeDir = cloneRootPart.CFrame.RightVector * (math.random() > 0.5 and 1 or -1)
+              end
+              local evadeTarget = cloneRootPart.Position + evadeDir.Unit * CONST.CLONE_EVADE_DISTANCE
+              cloneHumanoid:MoveTo(evadeTarget)
               cloneState.lastActionTimes.EVADE = now
               cloneState.isPerfectDodging = true
               cloneState.dodgeStartTime = now
           elseif action == "DASH" then
-              -- Simulate dash
+              -- Real physics-based dash using Humanoid:MoveTo
               local dashDir
               local currentDist = (cloneRootPart.Position - targetPos).Magnitude
               if cloneState.currentTactic == "Defensive" or state.myHealthPercent < 0.3 then
@@ -6034,9 +6219,19 @@ local function initializeCombatSystem(character)
               else
                   dashDir = cloneRootPart.CFrame.RightVector * (math.random() > 0.5 and 1 or -1)
               end
-              cloneRootPart.CFrame = CFrame.new(cloneRootPart.Position + dashDir * 10)
+              local dashTarget = cloneRootPart.Position + dashDir * CONST.CLONE_DASH_DISTANCE
+              cloneHumanoid:MoveTo(dashTarget)
               cloneState.lastActionTimes.DASH = now
           elseif action == "FEINT" then
+              -- Real feint: move toward target briefly then stop
+              local feintDir = (targetPos - cloneRootPart.Position).Unit
+              local feintTarget = cloneRootPart.Position + feintDir * 3
+              cloneHumanoid:MoveTo(feintTarget)
+              task.delay(0.15, function()
+                  if cloneHumanoid and cloneHumanoid.Health > 0 then
+                      cloneHumanoid:MoveTo(cloneRootPart.Position)
+                  end
+              end)
               cloneState.lastActionTimes.FEINT = now
               cloneState.isFeinting = true
               cloneState.feintStartTime = now
@@ -6046,7 +6241,7 @@ local function initializeCombatSystem(character)
               cloneState.isBlocking = true
               cloneState.blockStartTime = now
           elseif action == "REPOSITION" then
-              -- Strafe and maintain distance
+              -- Smart repositioning using Humanoid:MoveTo
               if now - cloneState.lastStrafeChange > 1.0 then
                   cloneState.strafeDirection *= -1
                   cloneState.lastStrafeChange = now
@@ -6059,7 +6254,7 @@ local function initializeCombatSystem(character)
           end
       end
       
-      -- Simplified action selection for clone
+      -- Intelligent action selection using loaded Q-values when available
       local function ChooseCloneAction(state, tactic, now)
           local possibleActions = {}
           
@@ -6089,27 +6284,82 @@ local function initializeCombatSystem(character)
           end
           table.insert(possibleActions, "REPOSITION")
           
-          -- Simple tactical decision
           if #possibleActions == 0 then return "REPOSITION" end
           
-          -- Prefer attacks when in range and have energy (fixed probability logic)
-          if state.inRange and state.energy > 50 then
-              -- Check for ATTACK action availability
-              for _, action in ipairs(possibleActions) do
-                  if action == "ATTACK" then
-                      if math.random() < CONST.CLONE_ATTACK_PROBABILITY then
-                          return "ATTACK"
+          -- Use Q-values from loaded best weights for intelligent decision making
+          if TrainingMode.cloneAI and TrainingMode.cloneAI.ActionStats then
+              local cloneStats = TrainingMode.cloneAI.ActionStats
+              local tacticStats = cloneStats[tactic]
+              
+              if tacticStats then
+                  local bestAction = nil
+                  local bestScore = -math.huge
+                  
+                  for _, action in ipairs(possibleActions) do
+                      local actionData = tacticStats[action]
+                      if actionData then
+                          -- Score based on Q-value and success rate
+                          local qValue = actionData.qValue or 0
+                          local winRate = (actionData.trials and actionData.trials > 0) 
+                              and (actionData.wins or 0) / actionData.trials or 0.5
+                          local score = qValue * 0.7 + winRate * 0.3
+                          
+                          -- Context bonuses
+                          if state.isTargetAttacking and (action == "EVADE" or action == "BLOCK") then
+                              score *= 1.5
+                          end
+                          if state.myHealthPercent < 0.3 and (action == "EVADE" or action == "BLOCK" or action == "DASH") then
+                              score *= 1.3
+                          end
+                          if state.targetHealthPercent < 0.2 and (action == "ATTACK" or action == "SPECIAL") then
+                              score *= 1.4
+                          end
+                          
+                          -- Small randomness for exploration
+                          score += (math.random() - 0.5) * 0.1
+                          
+                          if score > bestScore then
+                              bestScore = score
+                              bestAction = action
+                          end
                       end
-                      break -- Only check once
+                  end
+                  
+                  if bestAction then return bestAction end
+              end
+          end
+          
+          -- Fallback: tactical heuristic-based selection
+          -- Evade/block when target is attacking
+          if state.isTargetAttacking then
+              for _, action in ipairs(possibleActions) do
+                  if action == "EVADE" then return "EVADE" end
+              end
+              for _, action in ipairs(possibleActions) do
+                  if action == "BLOCK" then return "BLOCK" end
+              end
+          end
+          
+          -- Aggressive when target is low
+          if state.targetHealthPercent < 0.2 and state.inRange then
+              for _, action in ipairs(possibleActions) do
+                  if action == "SPECIAL" then return "SPECIAL" end
+              end
+              for _, action in ipairs(possibleActions) do
+                  if action == "ATTACK" then return "ATTACK" end
+              end
+          end
+          
+          -- Attack when in range with energy
+          if state.inRange and state.energy > 50 then
+              if math.random() < CONST.CLONE_ATTACK_PROBABILITY then
+                  for _, action in ipairs(possibleActions) do
+                      if action == "ATTACK" then return "ATTACK" end
                   end
               end
-              -- Check for SPECIAL action availability
-              for _, action in ipairs(possibleActions) do
-                  if action == "SPECIAL" then
-                      if math.random() < CONST.CLONE_SPECIAL_PROBABILITY then
-                          return "SPECIAL"
-                      end
-                      break -- Only check once
+              if math.random() < CONST.CLONE_SPECIAL_PROBABILITY then
+                  for _, action in ipairs(possibleActions) do
+                      if action == "SPECIAL" then return "SPECIAL" end
                   end
               end
           end
@@ -6135,7 +6385,29 @@ local function initializeCombatSystem(character)
               end
           end
           
-          -- Random action
+          -- Weighted random selection (prefer offensive actions)
+          local weights = {}
+          local totalWeight = 0
+          for _, action in ipairs(possibleActions) do
+              local w = 1
+              if action == "ATTACK" and state.inRange then w = 3
+              elseif action == "SPECIAL" and state.inRange then w = 2
+              elseif action == "REPOSITION" then w = 2
+              elseif action == "DASH" and state.distance > CONST.ATTACK_RANGE then w = 2
+              end
+              weights[action] = w
+              totalWeight += w
+          end
+          
+          local roll = math.random() * totalWeight
+          local cumulative = 0
+          for _, action in ipairs(possibleActions) do
+              cumulative += weights[action]
+              if roll <= cumulative then
+                  return action
+              end
+          end
+          
           return possibleActions[math.random(#possibleActions)]
       end
       
@@ -6144,14 +6416,24 @@ local function initializeCombatSystem(character)
           if cloneState.combatState ~= "ENGAGING" or cloneState.isFeinting then return end
           if not (cloneState.targetTorso and cloneState.targetTorso.Parent and cloneState.targetHumanoid) then return end
           
-          -- Aim at target
+          -- Face target smoothly (not instant snap)
           local targetPos = cloneState.targetTorso.Position
-          cloneRootPart.CFrame = CFrame.lookAt(cloneRootPart.Position, Vector3.new(targetPos.X, cloneRootPart.Position.Y, targetPos.Z))
+          local lookTarget = Vector3.new(targetPos.X, cloneRootPart.Position.Y, targetPos.Z)
+          local currentCF = cloneRootPart.CFrame
+          local desiredCF = CFrame.lookAt(cloneRootPart.Position, lookTarget)
+          -- Smooth rotation (lerp 30% per frame for natural-looking turning)
+          cloneRootPart.CFrame = currentCF:Lerp(desiredCF, 0.3)
           
           -- Build state
           local distance = (cloneRootPart.Position - cloneState.targetTorso.Position).Magnitude
           local myHealthPercent = cloneHumanoid.Health / cloneHumanoid.MaxHealth
           local targetHealthPercent = cloneState.targetHumanoid.Health / cloneState.targetHumanoid.MaxHealth
+          
+          -- Reset combo if window expired
+          if now > cloneState.comboStateEndTime then
+              cloneState.comboCount = 0
+              cloneState.consecutiveHits = 0
+          end
           
           local state = {
               myHealthPercent = myHealthPercent,
@@ -6160,18 +6442,28 @@ local function initializeCombatSystem(character)
               energy = cloneState.currentEnergy,
               inRange = distance <= CONST.ATTACK_RANGE,
               isTargetAttacking = cloneState.isTargetAttacking,
+              comboCount = cloneState.comboCount,
+              healthDiff = myHealthPercent - targetHealthPercent,
           }
           
-          -- Choose tactic (simplified)
-          if myHealthPercent < 0.3 then
+          -- Smart tactic selection based on multiple factors
+          if myHealthPercent < 0.2 then
               cloneState.currentTactic = "Defensive"
-          elseif targetHealthPercent < 0.2 then
+          elseif myHealthPercent < 0.4 and state.isTargetAttacking then
+              cloneState.currentTactic = "Defensive"
+          elseif targetHealthPercent < 0.15 then
               cloneState.currentTactic = "Finisher"
-          else
+          elseif state.healthDiff > 0.3 then
               cloneState.currentTactic = "Aggressive"
+          elseif state.healthDiff < -0.3 then
+              cloneState.currentTactic = "Defensive"
+          elseif cloneState.comboCount >= 2 then
+              cloneState.currentTactic = "Aggressive" -- Keep pressure during combos
+          else
+              cloneState.currentTactic = "Balanced"
           end
           
-          -- Choose action (simplified decision making)
+          -- Choose and execute action using intelligent selection
           local bestAction = ChooseCloneAction(state, cloneState.currentTactic, now)
           CloneExecuteAction(bestAction, state)
       end
